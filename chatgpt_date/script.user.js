@@ -202,7 +202,8 @@
   // -----------------------
   // Auto rename logic
   // -----------------------
-  var lastProcessedConversationId = null;
+  var lastAttemptByConversationId = Object.create(null);
+  var ATTEMPT_COOLDOWN_MS = 5000;
 
   async function maybeAutoRenameCurrentConversation() {
     if (!ENABLE_AUTO_RENAME) return;
@@ -210,9 +211,10 @@
     var conversationId = getConversationIdFromUrl();
     if (!conversationId) return;
 
-    // Avoid re-running too often on the same conversation.
-    if (conversationId === lastProcessedConversationId) return;
-    lastProcessedConversationId = conversationId;
+    var now = Date.now();
+    var lastAttempt = lastAttemptByConversationId[conversationId];
+    if (lastAttempt && now - lastAttempt < ATTEMPT_COOLDOWN_MS) return;
+    lastAttemptByConversationId[conversationId] = now;
 
     try {
       var accessToken = await getAccessToken();
