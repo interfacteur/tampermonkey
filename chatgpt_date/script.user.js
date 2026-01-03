@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT auto-rename with YYYYMMDD + fixed title banner
 // @namespace    local
-// @version      1.0.0
+// @version      1.1.0
 // @description  Auto-append conversation creation date (YYYYMMDD) to title and show a fixed banner with the page <title>.
 // @match        https://chatgpt.com/*
 // @match        https://chat.openai.com/*
@@ -263,7 +263,23 @@
   // -----------------------
   // SPA navigation hook
   // -----------------------
+  var navHooksInstalled = false;
+
+  function dispatchNavEvents(eventName) {
+    try {
+      window.dispatchEvent(new Event("locationchange"));
+      if (eventName) {
+        window.dispatchEvent(new Event(eventName));
+      }
+    } catch (e) {
+      console.warn("[cgpt] navigation event dispatch failed:", e && e.message ? e.message : e);
+    }
+  }
+
   function installSpaHooks() {
+    if (navHooksInstalled) return;
+    navHooksInstalled = true;
+
     var _pushState = history.pushState;
     var _replaceState = history.replaceState;
 
@@ -274,14 +290,21 @@
     }
 
     history.pushState = function () {
-      _pushState.apply(this, arguments);
+      var r = _pushState.apply(this, arguments);
       onNav();
+      dispatchNavEvents("pushstate");
+      return r;
     };
     history.replaceState = function () {
-      _replaceState.apply(this, arguments);
+      var r = _replaceState.apply(this, arguments);
       onNav();
+      dispatchNavEvents("replacestate");
+      return r;
     };
-    window.addEventListener("popstate", onNav);
+    window.addEventListener("popstate", function () {
+      onNav();
+      dispatchNavEvents("popstate");
+    });
 
     // Initial run
     onNav();
