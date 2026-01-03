@@ -17,17 +17,19 @@
   var ENABLE_AUTO_RENAME = true;
   var ENABLE_TITLE_BANNER = true;
 
-  // If the title already ends with " YYYYMMDD", do nothing.
-  // If the title already ends with " <8digits>" (any date), do nothing (safety).
+  // If the title already ends with " {YYYYMMDD}", do nothing.
+  // If the title already ends with " {<8digits>}", do nothing (safety).
   var RE_DATE_SUFFIX_THIS = function (yyyymmdd) {
-    return new RegExp(" " + yyyymmdd.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + "$");
+    return new RegExp(" \\{" + yyyymmdd.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + "\\}$");
   };
-  var RE_DATE_SUFFIX_ANY = / [0-9]{8}$/;
+  var RE_DATE_SUFFIX_ANY = / \{[0-9]{8}\}$/;
 
   // Banner style
   var BANNER_ID = "cgpt-fixed-title-banner";
+  var BANNER_BUTTON_ID = "cgpt-fixed-title-banner-toggle";
   var BANNER_HEIGHT_PX = 26;
   var BANNER_Z = 2147483647;
+  var bannerCollapsed = false;
 
   // -----------------------
   // Utilities
@@ -178,6 +180,83 @@
 
     updateBannerText();
     observeTitleChanges();
+    ensureBannerToggleButton();
+    installBannerCollapseHandler();
+  }
+
+  function ensureBannerToggleButton() {
+    var btn = document.getElementById(BANNER_BUTTON_ID);
+    if (!btn) {
+      btn = document.createElement("button");
+      btn.id = BANNER_BUTTON_ID;
+      btn.type = "button";
+      btn.textContent = "⬇";
+      btn.style.position = "fixed";
+      btn.style.top = "6px";
+      btn.style.right = "8px";
+      btn.style.zIndex = String(BANNER_Z + 1);
+      btn.style.padding = "2px 6px";
+      btn.style.fontSize = "12px";
+      btn.style.fontWeight = "700";
+      btn.style.border = "1px solid rgba(0,0,0,0.2)";
+      btn.style.borderRadius = "4px";
+      btn.style.background = "rgba(245,245,245,0.95)";
+      btn.style.cursor = "pointer";
+      btn.style.boxShadow = "0 1px 2px rgba(0,0,0,0.12)";
+      btn.style.display = "none";
+
+      btn.addEventListener("click", function () {
+        expandBanner();
+      });
+
+      document.documentElement.appendChild(btn);
+    }
+
+    updateBannerToggleVisibility();
+  }
+
+  function collapseBanner() {
+    var banner = document.getElementById(BANNER_ID);
+    if (banner) {
+      banner.style.display = "none";
+    }
+    bannerCollapsed = true;
+    updateBannerToggleVisibility();
+  }
+
+  function expandBanner() {
+    var banner = document.getElementById(BANNER_ID);
+    if (banner) {
+      banner.style.display = "flex";
+    }
+    bannerCollapsed = false;
+    updateBannerToggleVisibility();
+  }
+
+  function updateBannerToggleVisibility() {
+    var btn = document.getElementById(BANNER_BUTTON_ID);
+    if (!btn) return;
+
+    btn.style.display = bannerCollapsed ? "block" : "none";
+  }
+
+  var bannerCollapseHandlerInstalled = false;
+  function installBannerCollapseHandler() {
+    if (bannerCollapseHandlerInstalled) return;
+    bannerCollapseHandlerInstalled = true;
+
+    window.addEventListener("dblclick", function (e) {
+      if (bannerCollapsed) return;
+      var banner = document.getElementById(BANNER_ID);
+      if (!banner) return;
+
+      var rect = banner.getBoundingClientRect();
+      var withinX = e.clientX >= rect.left && e.clientX <= rect.right;
+      var withinY = e.clientY >= rect.top && e.clientY <= rect.bottom;
+      if (withinX && withinY) {
+        collapseBanner();
+      }
+    });
   }
 
   function updateBannerText() {
@@ -245,7 +324,7 @@
       // Safety: if it already ends with any 8-digit date, do nothing.
       if (RE_DATE_SUFFIX_ANY.test(title)) return;
 
-      var newTitle = title + " " + yyyymmdd;
+      var newTitle = title + " {" + yyyymmdd + "}";
 
       await patchConversationTitle(conversationId, newTitle, accessToken);
 
