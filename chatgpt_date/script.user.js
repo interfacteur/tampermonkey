@@ -3,6 +3,8 @@
 // @namespace    local
 // @version      1.1.0
 // @description  Auto-append conversation creation date (YYYYMMDD) to title and show a fixed banner with the page <title>.
+// @downloadURL  https://github.com/interfacteur/tampermonkey/blob/main/chatgpt_date/script.user.js
+// @updateURL    https://github.com/interfacteur/tampermonkey/blob/main/chatgpt_date/script.user.js
 // @match        https://chatgpt.com/*
 // @match        https://chat.openai.com/*
 // @grant        none
