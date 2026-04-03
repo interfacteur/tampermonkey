@@ -1,3 +1,5 @@
+ReadMe généré par Gemini ; script initial par ChatGPT puis "amendé" par Gemini
+
 # ChatGPT Safe Banner & Metadata 🛡️
 
 Ce script Tampermonkey améliore l'interface de ChatGPT en ajoutant une bannière fixe en haut de page. Elle affiche le titre de la conversation et la date de création au format `YYYYMMDD` sans générer de requêtes réseau superflues.
