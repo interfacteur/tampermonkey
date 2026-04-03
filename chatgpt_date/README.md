@@ -9,7 +9,9 @@ _au 20260403 : comme il générait de multiples requêtes serveur, il a fini par
 # ChatGPT Date
 
 Script Tampermonkey qui ajoute automatiquement la date de création (YYYYMMDD) au titre des conversations ChatGPT et affiche une barre fixe avec le contenu du <title> de la page.
+
 ---
+
 Ancienne version par ChatGPT : le script declenche aussi des evenements `locationchange`, `pushstate`, `replacestate` et `popstate` a chaque navigation pour que d'autres scripts puissent reagir aux changements d'URL.
 
 ## Installation
