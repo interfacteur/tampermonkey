@@ -1,8 +1,8 @@
 // ==UserScript==
-// @name         ChatGPT Safe Banner + UI Comfort (No API)
+// @name         ChatGPT Fixed Title Banner + Historical YYYYMMDD (No-API)
 // @namespace    local
-// @version      2.1.0
-// @description  Bandeau titre + date. Double-clic pour masquer, bouton pour afficher. SANS REQUÊTES API (Évite l'erreur 429).
+// @version      1.2.0
+// @description  Auto-append date to title and show a fixed banner. Fixed to avoid 429 errors by removing API calls.
 // @match        https://chatgpt.com/*
 // @match        https://chat.openai.com/*
 // @grant        none
@@ -11,103 +11,129 @@
 (function () {
   "use strict";
 
-  // --- Configuration ---
-  const BANNER_ID = "cgpt-safe-banner";
-  const TOGGLE_BTN_ID = "cgpt-banner-toggle";
-  const BANNER_HEIGHT_PX = 26;
-  const BANNER_Z = 2147483647;
+  var BANNER_ID = "cgpt-fixed-title-banner";
+  var BANNER_BUTTON_ID = "cgpt-fixed-title-banner-toggle";
+  var BANNER_HEIGHT_PX = 26;
+  var BANNER_Z = 2147483647;
+  var bannerCollapsed = false;
 
-  // --- Fonctions Utiles ---
-  function getYYYYMMDD() {
-    const d = new Date();
-    return d.getFullYear() + String(d.getMonth() + 1).padStart(2, "0") + String(d.getDate()).padStart(2, "0");
+  // --- Extraction de la date (via ton extension de timestamp) ---
+  function getHistoricalDate() {
+    var el = document.querySelector(".chatgpt-timestamp");
+    if (!el) return null;
+    var s = (el.textContent || "").trim();
+    var m = s.match(/^([A-Za-z]{3})\s+([0-9]{1,2})\s+([0-9]{4})/);
+    if (!m) return null;
+
+    var months = { Jan:"01", Feb:"02", Mar:"03", Apr:"04", May:"05", Jun:"06", Jul:"07", Aug:"08", Sep:"09", Oct:"10", Nov:"11", Dec:"12" };
+    return m[3] + months[m[1]] + m[2].padStart(2, "0");
   }
 
-  // --- Logique UI ---
-  function createUI() {
-    if (document.getElementById(BANNER_ID)) return;
-
-    // 1. La Bannière
-    const banner = document.createElement("div");
-    banner.id = BANNER_ID;
-    Object.assign(banner.style, {
-      position: "fixed", top: "0", left: "0", right: "0",
-      height: `${BANNER_HEIGHT_PX}px`, zIndex: BANNER_Z,
-      display: "flex", alignItems: "center", padding: "0 12px",
-      fontFamily: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace",
-      fontSize: "12px", fontWeight: "600", color: "#111",
-      background: "rgba(245,245,245,0.92)", borderBottom: "1px solid rgba(0,0,0,0.12)",
-      backdropFilter: "blur(6px)", webkitBackdropFilter: "blur(6px)",
-      cursor: "pointer", transition: "transform 0.2s ease"
-    });
-    banner.title = "Double-cliquez pour masquer";
-
-    const txt = document.createElement("div");
-    txt.id = `${BANNER_ID}-txt`;
-    txt.style.cssText = "white-space:nowrap; overflow:hidden; text-overflow:ellipsis; width:100%;";
-    banner.appendChild(txt);
-
-    // 2. Le Bouton de rappel (Flèche)
-    const btn = document.createElement("button");
-    btn.id = TOGGLE_BTN_ID;
-    btn.textContent = "⬇";
-    Object.assign(btn.style, {
-      position: "fixed", top: "4px", right: "8px", zIndex: BANNER_Z + 1,
-      padding: "2px 6px", fontSize: "12px", background: "white",
-      border: "1px solid #ccc", borderRadius: "4px", cursor: "pointer",
-      display: "none", boxShadow: "0 1px 3px rgba(0,0,0,0.1)"
-    });
-
-    // --- Événements ---
-    banner.addEventListener("dblclick", () => {
-      banner.style.display = "none";
-      btn.style.display = "block";
-    });
-
-    btn.addEventListener("click", () => {
+  // --- Interface (Reprise stricte de ton code) ---
+  function ensureTitleBanner() {
+    var banner = document.getElementById(BANNER_ID);
+    if (!banner) {
+      banner = document.createElement("div");
+      banner.id = BANNER_ID;
+      banner.style.position = "fixed";
+      banner.style.top = "0"; banner.style.left = "0"; banner.style.right = "0";
+      banner.style.height = BANNER_HEIGHT_PX + "px";
+      banner.style.zIndex = BANNER_Z;
       banner.style.display = "flex";
+      banner.style.alignItems = "center";
+      banner.style.padding = "0 10px";
+      banner.style.boxSizing = "border-box";
+      banner.style.fontFamily = "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace";
+      banner.style.fontSize = "12px";
+      banner.style.fontWeight = "600";
+      banner.style.color = "#111";
+      banner.style.background = "rgba(245,245,245,0.92)";
+      banner.style.borderBottom = "1px solid rgba(0,0,0,0.12)";
+      banner.style.backdropFilter = "blur(6px)";
+      banner.style.pointerEvents = "none";
+
+      var txt = document.createElement("div");
+      txt.id = BANNER_ID + "-txt";
+      txt.style.whiteSpace = "nowrap";
+      txt.style.overflow = "hidden";
+      txt.style.textOverflow = "ellipsis";
+      txt.style.width = "100%";
+      banner.appendChild(txt);
+      document.documentElement.appendChild(banner);
+    }
+    updateBannerText();
+    ensureBannerToggleButton();
+  }
+
+  function ensureBannerToggleButton() {
+    var btn = document.getElementById(BANNER_BUTTON_ID);
+    if (!btn) {
+      btn = document.createElement("button");
+      btn.id = BANNER_BUTTON_ID;
+      btn.type = "button";
+      btn.textContent = "⬇";
+      btn.style.position = "fixed";
+      btn.style.top = "6px"; btn.style.right = "8px";
+      btn.style.zIndex = BANNER_Z + 1;
+      btn.style.padding = "2px 6px";
+      btn.style.fontSize = "12px";
+      btn.style.background = "rgba(245,245,245,0.95)";
+      btn.style.border = "1px solid rgba(0,0,0,0.2)";
+      btn.style.borderRadius = "4px";
+      btn.style.cursor = "pointer";
       btn.style.display = "none";
-    });
-
-    document.documentElement.appendChild(banner);
-    document.documentElement.appendChild(btn);
-    updateText();
+      btn.addEventListener("click", function () { expandBanner(); });
+      document.documentElement.appendChild(btn);
+    }
   }
 
-  function updateText() {
-    const txt = document.getElementById(`${BANNER_ID}-txt`);
+  function collapseBanner() {
+    var banner = document.getElementById(BANNER_ID);
+    if (banner) banner.style.display = "none";
+    bannerCollapsed = true;
+    document.getElementById(BANNER_BUTTON_ID).style.display = "block";
+  }
+
+  function expandBanner() {
+    var banner = document.getElementById(BANNER_ID);
+    if (banner) banner.style.display = "flex";
+    bannerCollapsed = false;
+    document.getElementById(BANNER_BUTTON_ID).style.display = "none";
+  }
+
+  window.addEventListener("dblclick", function (e) {
+    var banner = document.getElementById(BANNER_ID);
+    if (!banner || bannerCollapsed) return;
+    var rect = banner.getBoundingClientRect();
+    if (e.clientX >= rect.left && e.clientX <= rect.right && e.clientY >= rect.top && e.clientY <= rect.bottom) {
+      collapseBanner();
+    }
+  });
+
+  function updateBannerText() {
+    var txt = document.getElementById(BANNER_ID + "-txt");
     if (!txt) return;
-
-    // Nettoie le titre (enlève "ChatGPT" et les suffixes)
-    let cleanTitle = document.title.replace(/ChatGPT\s*(-?)/i, "").trim();
-    if (!cleanTitle) cleanTitle = "Nouvelle conversation";
-
-    txt.textContent = `[${getYYYYMMDD()}] ${cleanTitle}`;
+    var date = getHistoricalDate() || "--------";
+    var title = document.title.replace(/ChatGPT/i, "").trim();
+    txt.textContent = (title || "Nouvelle conversation") + " {" + date + "}";
   }
 
-  // --- Surveillance ---
-  function init() {
-    if (!document.body) {
-        setTimeout(init, 100);
-        return;
-    }
-    createUI();
-
-    // Observe les changements de titre de l'onglet (SPA)
-    const titleTag = document.querySelector('title');
-    if (titleTag) {
-      new MutationObserver(updateText).observe(titleTag, { childList: true });
-    }
-
-    // Sécurité pour les changements d'URL
-    let lastUrl = location.href;
-    setInterval(() => {
-      if (location.href !== lastUrl) {
-        lastUrl = location.href;
-        updateText();
-      }
-    }, 1500);
+  // --- Logic ---
+  function onNav() {
+    ensureTitleBanner();
+    setTimeout(updateBannerText, 600);
   }
 
-  init();
+  // Hook SPA
+  var _pushState = history.pushState;
+  var _replaceState = history.replaceState;
+  history.pushState = function () { _pushState.apply(this, arguments); onNav(); };
+  history.replaceState = function () { _replaceState.apply(this, arguments); onNav(); };
+  window.addEventListener("popstate", onNav);
+
+  // MutationObserver pour détecter l'arrivée du timestamp
+  new MutationObserver(updateBannerText).observe(document.head, { subtree: true, childList: true, characterData: true });
+  new MutationObserver(updateBannerText).observe(document.body, { childList: true, subtree: true });
+
+  onNav();
 })();
