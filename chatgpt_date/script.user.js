@@ -1,5 +1,5 @@
 // ==UserScript==
-// @name         ChatGPT auto-rename with YYYYMMDD + fixed title banner
+// @name         ChatGPT auto-rename with YYYYMMDD + fixed title banner CONSTAT 20260402 : cause de pages impossibles à charger depuis fin mars
 // @namespace    local
 // @version      1.1.0
 // @description  Auto-append conversation creation date (YYYYMMDD) to title and show a fixed banner with the page <title>.
