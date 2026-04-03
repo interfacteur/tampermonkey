@@ -1,5 +1,7 @@
 **IMPORTANT :**
 _l'ensemble du projet, code et readme, a été généré par ChatGPT + Codex (CLI puis Cloud)_
+
+
 _au 20260403 : comme il générait de multiples requêtes serveur, il a fini par provoquer l'impossibilité de charger les pages (nouvelles mesures de protection d'OpenAI mars-avril 2026) : la nouvelle version est "amendée" par Gemini_
 
 ---
