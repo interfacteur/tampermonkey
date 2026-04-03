@@ -37,6 +37,7 @@ Le projet a pivoté d'un outil d'automatisation risqué vers une extension d'int
 4.  Enregistrez et rafraîchissez votre page ChatGPT.
 
 > **Note** : Pour une précision optimale de la date, ce script est optimisé pour lire les marqueurs temporels injectés par des extensions de type "ChatGPT Timestamp".
+
 => très précisément ChatGPT Timestamp version 0.2.3 à cette heure (https://chromewebstore.google.com/detail/chatgpt-timestamp/kdjfhglijhebcchcfkknicfaedhhfpmo)
 
 ## 📜 Licence
