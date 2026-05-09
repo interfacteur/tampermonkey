@@ -1,10 +1,10 @@
 // ==UserScript==
 // @name         ChatGPT auto-rename with YYYYMMDD + fixed title banner CONSTAT 20260402 : cause de pages impossibles à charger depuis fin mars
 // @namespace    local
-// @version      1.1.0
+// @version      1.1.1
 // @description  Auto-append conversation creation date (YYYYMMDD) to title and show a fixed banner with the page <title>.
-// @downloadURL  https://github.com/interfacteur/tampermonkey/blob/main/chatgpt_date/script.user.js
-// @updateURL    https://github.com/interfacteur/tampermonkey/blob/main/chatgpt_date/script.user.js
+// @downloadURL  https://raw.githubusercontent.com/interfacteur/tampermonkey/refs/heads/main/chatgpt_date/script.user_20260403.js
+// @updateURL    https://raw.githubusercontent.com/interfacteur/tampermonkey/refs/heads/main/chatgpt_date/script.user_20260403.js
 // @match        https://chatgpt.com/*
 // @match        https://chat.openai.com/*
 // @grant        none
