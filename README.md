@@ -8,7 +8,7 @@ Ce dépôt regroupe des userscripts destinés à modifier ou compléter localeme
 
 | Dossier | Script | Objet |
 |---|---|---|
-| `chatgpt_date` | `ctdate.user.js` | Ajout d'une bannière de titre datée dans ChatGPT et, lorsque c'est possible, horodatage automatique du titre de la conversation. |
+| `chatgpt_date` | `chatgpt_date.user.js` | Ajout d'une bannière de titre datée dans ChatGPT et, lorsque c'est possible, horodatage automatique du titre de la conversation. |
 | `chatgpt_export` | `chatgpt_export.user.js` | Export de la conversation ChatGPT courante en JSON, Markdown et HTML. |
 
 ## Installation générale
@@ -20,7 +20,7 @@ Ce dépôt regroupe des userscripts destinés à modifier ou compléter localeme
 
 Pour le script ChatGPT, l'installation directe passe par le fichier :
 
-`chatgpt_date/ctdate.user.js`
+`chatgpt_date/chatgpt_date.user.js`
 
 ## Mise à jour
 

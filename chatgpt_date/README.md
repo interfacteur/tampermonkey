@@ -4,7 +4,7 @@ Userscript Tampermonkey pour ChatGPT.
 
 Le script ajoute une bannière fixe en haut de la page afin d’afficher le titre daté de la conversation courante. Lorsque la conversation n’est pas encore horodatée, le script peut tenter un renommage automatique unique du titre côté ChatGPT, après détection d’un titre stabilisé et d’un horodatage disponible dans la page.
 
-Fichier principal : `ctdate.user.js`.
+Fichier principal : `chatgpt_date.user.js`.
 
 ## Fonction
 
@@ -35,7 +35,7 @@ Hors page de conversation, par exemple sur la racine ChatGPT ou la racine d’un
 
 ## Installation
 
-1. Ouvrir `ctdate.user.js` sur GitHub.
+1. Ouvrir `chatgpt_date.user.js` sur GitHub.
 2. Cliquer sur `Raw`.
 3. Laisser Tampermonkey proposer l’installation.
 4. Vérifier que le script s’applique bien à :
