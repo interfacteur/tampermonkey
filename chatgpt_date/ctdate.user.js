@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Fixed Title Banner Auto Date
 // @namespace    local
-// @version      1.4.0
+// @version      1.4.1
 // @description  Fixed banner with dated chat title. One-shot server rename after stable title and timestamp.
 // @downloadURL  https://raw.githubusercontent.com/interfacteur/tampermonkey/main/chatgpt_date/ctdate.user.js
 // @updateURL    https://raw.githubusercontent.com/interfacteur/tampermonkey/main/chatgpt_date/ctdate.user.js
@@ -36,6 +36,7 @@
   var bannerVisible = false;
 
   var renameState = Object.create(null);
+  var renamedDisplayTitle = Object.create(null);
 
   function log() {
     if (false) {
@@ -323,6 +324,7 @@
             displayTitle = addDateSuffix(displayTitle, yyyymmdd);
           }
 
+          renamedDisplayTitle[conversationId] = displayTitle;
           showBanner(displayTitle);
 
           setTimeout(evaluateCurrentPage, 500);
@@ -414,7 +416,14 @@
       return;
     }
 
-    if (renameState[conversationId] === "done" || renameState[conversationId] === "failed") {
+    if (renameState[conversationId] === "done") {
+      if (renamedDisplayTitle[conversationId]) {
+        showBanner(renamedDisplayTitle[conversationId]);
+      }
+      return;
+    }
+
+    if (renameState[conversationId] === "failed") {
       hideBanner();
       return;
     }
