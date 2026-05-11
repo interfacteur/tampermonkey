@@ -31,7 +31,7 @@ Sur une page de conversation non horodatée :
 - renommage unique du titre de la conversation ;
 - affichage de la bannière datée.
 
-Hors page de conversation, par exemple sur la racine ChatGPT ou la racine d’un projet, le script ne doit pas afficher de bannière.
+Hors page de conversation, par exemple sur la racine ChatGPT ou la racine d’un projet, le script s’arrête immédiatement et ne doit pas afficher de bannière.
 
 ## Installation
 

@@ -16,4 +16,6 @@ Scripts Tampermonkey liés à l'export des conversations ChatGPT.
 
 ## Prudence
 
+Le script s’arrête immédiatement si l’URL courante n’est pas une page de conversation contenant `/c/<id>`.
+
 Le script utilise des endpoints internes de ChatGPT pour lire les données de la conversation courante. Ces endpoints ne sont pas une API publique stable et peuvent changer sans préavis.

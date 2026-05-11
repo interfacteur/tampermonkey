@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT export current conversation JSON MD HTML
 // @namespace    local
-// @version      0.4.0
+// @version      0.4.1
 // @description  Export current ChatGPT conversation from backend data as JSON, Markdown, and HTML.
 // @match        https://chatgpt.com/*
 // @match        https://chat.openai.com/*
@@ -19,6 +19,10 @@
   function getConversationId() {
     var m = location.pathname.match(/\/c\/([^/?#]+)/);
     return m ? m[1] : null;
+  }
+
+  if (!getConversationId()) {
+    return;
   }
 
   function getDisplayTitle(fallbackTitle) {
