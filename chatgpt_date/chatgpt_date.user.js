@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Fixed Title Banner Auto Date
 // @namespace    local
-// @version      1.4.2
+// @version      1.5.0
 // @description  Fixed banner with dated chat title. One-shot server rename after stable title and timestamp.
 // @downloadURL  https://raw.githubusercontent.com/interfacteur/tampermonkey/main/chatgpt_date/chatgpt_date.user.js
 // @updateURL    https://raw.githubusercontent.com/interfacteur/tampermonkey/main/chatgpt_date/chatgpt_date.user.js
@@ -36,6 +36,7 @@
   var bannerVisible = false;
 
   var renameState = Object.create(null);
+  var backendDateAttempted = Object.create(null);
   var renamedDisplayTitle = Object.create(null);
 
   function log() {
@@ -51,10 +52,6 @@
   function getConversationIdFromUrl() {
     var m = location.pathname.match(/\/c\/([a-z0-9-]+)/i);
     return m ? m[1] : null;
-  }
-
-  if (!getConversationIdFromUrl()) {
-    return;
   }
 
   function cleanDocumentTitle(value) {
@@ -102,6 +99,40 @@
     if (!mos[m[1]]) return null;
 
     return m[3] + mos[m[1]] + m[2].padStart(2, "0");
+  }
+
+  function toYYYYMMDDFromSeconds(seconds) {
+    if (typeof seconds !== "number" || !isFinite(seconds)) return null;
+
+    var d = new Date(seconds * 1000);
+    if (isNaN(d.getTime())) return null;
+
+    var y = String(d.getFullYear());
+    var m = String(d.getMonth() + 1).padStart(2, "0");
+    var day = String(d.getDate()).padStart(2, "0");
+
+    return y + m + day;
+  }
+
+  function getFirstMessageCreateTime(convo) {
+    var mapping = convo && convo.mapping ? convo.mapping : {};
+    var first = null;
+
+    Object.keys(mapping).forEach(function (key) {
+      var msg = mapping[key] && mapping[key].message;
+      var ts = msg && typeof msg.create_time === "number" ? msg.create_time : null;
+
+      if (ts && (!first || ts < first)) {
+        first = ts;
+      }
+    });
+
+    return first;
+  }
+
+  function getConversationDate(convo) {
+    return toYYYYMMDDFromSeconds(convo && convo.create_time) ||
+      toYYYYMMDDFromSeconds(getFirstMessageCreateTime(convo));
   }
 
   function setupUI() {
@@ -236,7 +267,7 @@
     });
   }
 
-  function fetchConversationTitle(conversationId, token) {
+  function fetchConversation(conversationId, token) {
     var url = "/backend-api/conversation/" + encodeURIComponent(conversationId);
 
     return fetch(url, {
@@ -251,12 +282,6 @@
         throw new Error("GET " + url + " failed: " + r.status);
       }
       return r.json();
-    }).then(function (j) {
-      var title = j && typeof j.title === "string" ? j.title.trim() : "";
-      if (!title) {
-        throw new Error("Empty conversation title");
-      }
-      return title;
     });
   }
 
@@ -283,26 +308,41 @@
     });
   }
 
-  function autoRenameOnce(conversationId, yyyymmdd) {
-    if (!conversationId || !yyyymmdd) return;
+  function autoRenameOnce(conversationId, fallbackDate) {
+    if (!conversationId) return;
 
     if (renameState[conversationId]) {
       return;
+    }
+
+    if (!fallbackDate && backendDateAttempted[conversationId]) {
+      startTimestampMonitor(conversationId);
+      return;
+    }
+
+    if (!fallbackDate) {
+      backendDateAttempted[conversationId] = true;
     }
 
     renameState[conversationId] = "running";
 
     getAccessToken()
       .then(function (token) {
-        return fetchConversationTitle(conversationId, token).then(function (apiTitle) {
+        return fetchConversation(conversationId, token).then(function (convo) {
           return {
             token: token,
-            apiTitle: apiTitle
+            convo: convo
           };
         });
       })
       .then(function (data) {
-        var apiTitle = data.apiTitle;
+        var convo = data.convo;
+        var apiTitle = convo && typeof convo.title === "string" ? convo.title.trim() : "";
+        var yyyymmdd = getConversationDate(convo) || fallbackDate;
+
+        if (!apiTitle) {
+          throw new Error("Empty conversation title");
+        }
 
         if (RE_DATE.test(apiTitle)) {
           renameState[conversationId] = "done";
@@ -312,6 +352,12 @@
             showBanner(displayTitleAlready);
           }
 
+          return null;
+        }
+
+        if (!yyyymmdd) {
+          delete renameState[conversationId];
+          startTimestampMonitor(conversationId);
           return null;
         }
 
@@ -331,6 +377,10 @@
           renamedDisplayTitle[conversationId] = displayTitle;
           showBanner(displayTitle);
 
+          if (!isNeutralTitle(displayTitle) && RE_DATE.test(displayTitle)) {
+            document.title = displayTitle;
+          }
+
           setTimeout(evaluateCurrentPage, 500);
           setTimeout(evaluateCurrentPage, 1500);
 
@@ -338,6 +388,13 @@
         });
       })
       .catch(function (e) {
+        if (!fallbackDate) {
+          delete renameState[conversationId];
+          startTimestampMonitor(conversationId);
+          warn("[cgpt-title-date] backend date skipped, waiting for DOM timestamp:", e && e.message ? e.message : e);
+          return;
+        }
+
         renameState[conversationId] = "failed";
         warn("[cgpt-title-date] auto rename skipped:", e && e.message ? e.message : e);
       });
@@ -432,6 +489,11 @@
       return;
     }
 
+    if (!backendDateAttempted[conversationId]) {
+      autoRenameOnce(conversationId, null);
+      return;
+    }
+
     startTimestampMonitor(conversationId);
   }
 
@@ -442,12 +504,16 @@
 
     lastUrl = location.href;
     titleAtRouteChange = document.title;
-    waitingForFreshTitle = true;
+    waitingForFreshTitle = Boolean(getConversationIdFromUrl());
 
     stopTimestampMonitor();
     hideBanner();
 
     setTimeout(evaluateCurrentPage, 0);
+    setTimeout(function () {
+      waitingForFreshTitle = false;
+      evaluateCurrentPage();
+    }, 1000);
   }
 
   function onTitleMaybeChanged() {
@@ -515,7 +581,6 @@
   }
 
   function start() {
-    setupUI();
     installTitleObserver();
     installHistoryHooks();
     installUrlPoller();

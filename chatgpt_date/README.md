@@ -31,7 +31,7 @@ Sur une page de conversation non horodatée :
 - renommage unique du titre de la conversation ;
 - affichage de la bannière datée.
 
-Hors page de conversation, par exemple sur la racine ChatGPT ou la racine d’un projet, le script s’arrête immédiatement et ne doit pas afficher de bannière.
+Hors page de conversation, par exemple sur la racine ChatGPT ou la racine d’un projet, le script garde seulement une surveillance légère afin de détecter une arrivée ultérieure sur `/c/<id>` : il ne doit afficher aucune bannière, ne lancer aucun moniteur timestamp et ne faire aucune requête backend.
 
 ## Installation
 
@@ -56,7 +56,8 @@ Le script combine plusieurs signaux afin d’éviter les traitements prématuré
 - surveillance de l’URL pour détecter les changements de conversation dans l’application monopage ;
 - observation du titre du document ;
 - attente d’un titre stabilisé ;
-- recherche temporaire, limitée dans le temps, de `.chatgpt-timestamp` ;
+- récupération backend ponctuelle de `conversation.create_time`, avec fallback sur la première date de message exploitable puis sur `.chatgpt-timestamp` ;
+- recherche temporaire, limitée dans le temps, de `.chatgpt-timestamp` lorsque le backend ne fournit pas de date exploitable ;
 - affichage de la bannière seulement lorsqu’un titre daté peut être affiché ;
 - tentative de renommage limitée à une seule fois par conversation et par chargement du script.
 
@@ -70,7 +71,7 @@ Le script doit donc rester prudent :
 
 - pas de boucle réseau permanente ;
 - pas de renommage répété ;
-- pas de `PATCH` tant que le titre et la date ne sont pas disponibles ;
+- pas de `PATCH` tant que le titre et une date backend ou DOM ne sont pas disponibles ;
 - pas de bannière lorsque la date est absente ;
 - arrêt du moniteur temporaire après expiration.
 

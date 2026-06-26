@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT export current conversation JSON MD HTML
 // @namespace    local
-// @version      1.0.0
+// @version      1.1.0
 // @description  Export current ChatGPT conversation from backend data as JSON, Markdown, and HTML.
 // @match        https://chatgpt.com/*
 // @match        https://chat.openai.com/*
@@ -15,14 +15,15 @@
   var API = "/backend-api";
   var BTN_ID = "cgpt-export-current-all";
   var DEVICE_ID = crypto.randomUUID();
+  var URL_POLL_MS = 1000;
+
+  var lastUrl = location.href;
+  var urlPollHandle = null;
+  var domObserver = null;
 
   function getConversationId() {
     var m = location.pathname.match(/\/c\/([^/?#]+)/);
     return m ? m[1] : null;
-  }
-
-  if (!getConversationId()) {
-    return;
   }
 
   function getDisplayTitle(fallbackTitle) {
@@ -490,6 +491,7 @@
   }
 
   function addExportMenu() {
+    if (!getConversationId() || !document.body) return;
     if (document.getElementById(BTN_ID)) return;
 
     var wrap = document.createElement("div");
@@ -541,11 +543,77 @@
     document.body.appendChild(wrap);
   }
 
-  addExportMenu();
+  function removeExportMenu() {
+    var wrap = document.getElementById(BTN_ID);
+    if (wrap) {
+      wrap.remove();
+    }
+  }
 
-  new MutationObserver(addExportMenu).observe(document.documentElement, {
-    childList: true,
-    subtree: true
-  });
+  function syncExportMenu() {
+    if (!getConversationId()) {
+      removeExportMenu();
+      return;
+    }
+
+    addExportMenu();
+  }
+
+  function onRouteMaybeChanged() {
+    if (location.href === lastUrl) {
+      return;
+    }
+
+    lastUrl = location.href;
+    setTimeout(syncExportMenu, 0);
+  }
+
+  function installHistoryHooks() {
+    var oldPushState = history.pushState;
+    var oldReplaceState = history.replaceState;
+
+    history.pushState = function () {
+      var r = oldPushState.apply(this, arguments);
+      onRouteMaybeChanged();
+      return r;
+    };
+
+    history.replaceState = function () {
+      var r = oldReplaceState.apply(this, arguments);
+      onRouteMaybeChanged();
+      return r;
+    };
+
+    window.addEventListener("popstate", function () {
+      setTimeout(onRouteMaybeChanged, 0);
+    });
+  }
+
+  function installUrlPoller() {
+    if (urlPollHandle) return;
+
+    urlPollHandle = setInterval(function () {
+      onRouteMaybeChanged();
+    }, URL_POLL_MS);
+  }
+
+  function installDomObserver() {
+    if (domObserver) return;
+
+    domObserver = new MutationObserver(syncExportMenu);
+    domObserver.observe(document.documentElement, {
+      childList: true,
+      subtree: true
+    });
+  }
+
+  function start() {
+    installHistoryHooks();
+    installUrlPoller();
+    installDomObserver();
+    syncExportMenu();
+  }
+
+  start();
 
 })();
