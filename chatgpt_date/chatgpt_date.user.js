@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Fixed Title Banner Auto Date
 // @namespace    local
-// @version      1.5.0
+// @version      1.6.0
 // @description  Fixed banner with dated chat title. One-shot server rename after stable title and timestamp.
 // @downloadURL  https://raw.githubusercontent.com/interfacteur/tampermonkey/main/chatgpt_date/chatgpt_date.user.js
 // @updateURL    https://raw.githubusercontent.com/interfacteur/tampermonkey/main/chatgpt_date/chatgpt_date.user.js
@@ -54,6 +54,35 @@
     return m ? m[1] : null;
   }
 
+  function getProjectIdFromUrl() {
+    var m = location.pathname.match(/\/g\/(g-p-[^/]+)\/c\/[a-z0-9-]+/i);
+    return m ? m[1] : null;
+  }
+
+  function getProjectTitle() {
+    var projectId = getProjectIdFromUrl();
+    if (!projectId) return null;
+
+    var links = document.querySelectorAll('a[href$="/project"]');
+
+    for (var i = 0; i < links.length; i++) {
+      var pathname;
+
+      try {
+        pathname = new URL(links[i].getAttribute("href"), location.origin).pathname;
+      } catch (e) {
+        continue;
+      }
+
+      if (pathname === "/g/" + projectId + "/project") {
+        var title = String(links[i].textContent || "").trim();
+        return title || null;
+      }
+    }
+
+    return null;
+  }
+
   function cleanDocumentTitle(value) {
     var t = String(value || "").trim();
     t = t.replace(/^ChatGPT\s*-\s*/i, "").trim();
@@ -71,6 +100,21 @@
 
   function addDateSuffix(title, yyyymmdd) {
     return removeDateSuffix(title) + " {" + yyyymmdd + "}";
+  }
+
+  function getDateSuffix(title) {
+    var m = String(title || "").match(/ \{([0-9]{8})\}$/);
+    return m ? m[1] : null;
+  }
+
+  function addProjectPrefix(title, projectTitle) {
+    var baseTitle = removeDateSuffix(title);
+    if (!projectTitle) return baseTitle;
+
+    var prefix = projectTitle + " - ";
+    if (baseTitle.slice(0, prefix.length) === prefix) return baseTitle;
+
+    return prefix + baseTitle;
   }
 
   function getHistDate() {
@@ -311,6 +355,13 @@
   function autoRenameOnce(conversationId, fallbackDate) {
     if (!conversationId) return;
 
+    var projectId = getProjectIdFromUrl();
+    var projectTitle = getProjectTitle();
+
+    // On project routes, wait until the breadcrumb has rendered. Otherwise the
+    // one-shot rename would permanently omit the project prefix.
+    if (projectId && !projectTitle) return;
+
     if (renameState[conversationId]) {
       return;
     }
@@ -338,13 +389,21 @@
       .then(function (data) {
         var convo = data.convo;
         var apiTitle = convo && typeof convo.title === "string" ? convo.title.trim() : "";
-        var yyyymmdd = getConversationDate(convo) || fallbackDate;
+        var yyyymmdd = getConversationDate(convo) || fallbackDate || getDateSuffix(apiTitle);
 
         if (!apiTitle) {
           throw new Error("Empty conversation title");
         }
 
-        if (RE_DATE.test(apiTitle)) {
+        if (!yyyymmdd) {
+          delete renameState[conversationId];
+          startTimestampMonitor(conversationId);
+          return null;
+        }
+
+        var newApiTitle = addDateSuffix(addProjectPrefix(apiTitle, projectTitle), yyyymmdd);
+
+        if (newApiTitle === apiTitle) {
           renameState[conversationId] = "done";
 
           var displayTitleAlready = cleanDocumentTitle(document.title);
@@ -355,24 +414,10 @@
           return null;
         }
 
-        if (!yyyymmdd) {
-          delete renameState[conversationId];
-          startTimestampMonitor(conversationId);
-          return null;
-        }
-
-        var newApiTitle = addDateSuffix(apiTitle, yyyymmdd);
-
         return patchConversationTitle(conversationId, newApiTitle, data.token).then(function () {
           renameState[conversationId] = "done";
 
-          var displayTitle = cleanDocumentTitle(document.title);
-
-          if (isNeutralTitle(displayTitle)) {
-            displayTitle = newApiTitle;
-          } else {
-            displayTitle = addDateSuffix(displayTitle, yyyymmdd);
-          }
+          var displayTitle = newApiTitle;
 
           renamedDisplayTitle[conversationId] = displayTitle;
           showBanner(displayTitle);
@@ -468,6 +513,12 @@
     }
 
     if (RE_DATE.test(title)) {
+      var projectTitle = getProjectTitle();
+      if (projectTitle && title.slice(0, projectTitle.length + 3) !== projectTitle + " - ") {
+        autoRenameOnce(conversationId, getDateSuffix(title));
+        return;
+      }
+
       stopTimestampMonitor();
       showBanner(title);
       return;
@@ -566,6 +617,11 @@
 
     urlPollHandle = setInterval(function () {
       onRouteMaybeChanged();
+
+      var conversationId = getConversationIdFromUrl();
+      if (conversationId && !renameState[conversationId]) {
+        evaluateCurrentPage();
+      }
     }, URL_POLL_MS);
   }
 
