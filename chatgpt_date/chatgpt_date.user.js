@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Fixed Title Banner Auto Date
 // @namespace    local
-// @version      1.6.0
+// @version      1.6.1
 // @description  Fixed banner with dated chat title. One-shot server rename after stable title and timestamp.
 // @downloadURL  https://raw.githubusercontent.com/interfacteur/tampermonkey/main/chatgpt_date/chatgpt_date.user.js
 // @updateURL    https://raw.githubusercontent.com/interfacteur/tampermonkey/main/chatgpt_date/chatgpt_date.user.js
@@ -379,6 +379,19 @@
 
     getAccessToken()
       .then(function (token) {
+        // A project conversation can return 404 for the legacy GET endpoint
+        // even though its title can still be patched. Once the DOM timestamp
+        // fallback has supplied a date, use the stable document title instead
+        // of making the same failing GET request again.
+        if (fallbackDate) {
+          return {
+            token: token,
+            convo: {
+              title: cleanDocumentTitle(document.title)
+            }
+          };
+        }
+
         return fetchConversation(conversationId, token).then(function (convo) {
           return {
             token: token,
@@ -436,7 +449,7 @@
         if (!fallbackDate) {
           delete renameState[conversationId];
           startTimestampMonitor(conversationId);
-          warn("[cgpt-title-date] backend date skipped, waiting for DOM timestamp:", e && e.message ? e.message : e);
+          warn("[cgpt-title-date] conversation GET unavailable; waiting for DOM timestamp before trying a direct title PATCH:", e && e.message ? e.message : e);
           return;
         }
 

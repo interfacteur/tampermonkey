@@ -59,7 +59,7 @@ Le script combine plusieurs signaux afin d’éviter les traitements prématuré
 - observation du titre du document ;
 - attente d’un titre stabilisé ;
 - sur une route de projet, attente du fil d’Ariane et lecture du nom du projet ;
-- récupération backend ponctuelle de `conversation.create_time`, avec fallback sur la première date de message exploitable puis sur `.chatgpt-timestamp` ;
+- récupération backend ponctuelle de `conversation.create_time`, avec fallback sur la première date de message exploitable puis sur `.chatgpt-timestamp` ; si la lecture backend d’une conversation de projet renvoie `404`, le fallback DOM tente directement le renommage sans répéter cette lecture ;
 - recherche temporaire, limitée dans le temps, de `.chatgpt-timestamp` lorsque le backend ne fournit pas de date exploitable ;
 - affichage de la bannière seulement lorsqu’un titre daté peut être affiché ;
 - tentative de renommage limitée à une seule fois par conversation et par chargement du script.
