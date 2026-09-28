@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Fixed Title Banner Auto Date
 // @namespace    local
-// @version      1.7.0
+// @version      1.8.0
 // @description  Fixed banner with dated chat title. One-shot server rename after stable title and timestamp.
 // @downloadURL  https://raw.githubusercontent.com/interfacteur/tampermonkey/main/chatgpt_date/chatgpt_date.user.js
 // @updateURL    https://raw.githubusercontent.com/interfacteur/tampermonkey/main/chatgpt_date/chatgpt_date.user.js
@@ -37,6 +37,7 @@
 
   var renameState = Object.create(null);
   var backendDateAttempted = Object.create(null);
+  var datedTitle = Object.create(null);
   var renamedDisplayTitle = Object.create(null);
 
   function log() {
@@ -102,34 +103,9 @@
     return removeDateSuffix(title) + " {" + yyyymmdd + "}";
   }
 
-  function getDateSuffix(title) {
-    var m = String(title || "").match(/ \{([0-9]{8})\}$/);
-    return m ? m[1] : null;
-  }
-
-  function addProjectPrefix(title, projectTitle) {
-    var baseTitle = removeDateSuffix(title);
-    var yyyymmdd = getDateSuffix(title);
-    if (!projectTitle) return yyyymmdd ? addDateSuffix(baseTitle, yyyymmdd) : baseTitle;
-
-    var prefix = projectTitle + " - ";
-    var displayTitle = baseTitle.slice(0, prefix.length) === prefix
-      ? baseTitle
-      : prefix + baseTitle;
-
-    return yyyymmdd ? addDateSuffix(displayTitle, yyyymmdd) : displayTitle;
-  }
-
-  function removeProjectPrefix(title, projectTitle) {
-    var baseTitle = removeDateSuffix(title);
-    if (!projectTitle) return baseTitle;
-
-    var prefix = projectTitle + " - ";
-    if (baseTitle.slice(0, prefix.length) === prefix) {
-      return baseTitle.slice(prefix.length).trim();
-    }
-
-    return baseTitle;
+  function getDisplayTitle(title) {
+    var projectTitle = getProjectTitle();
+    return projectTitle ? projectTitle + " - " + title : title;
   }
 
   function getHistDate() {
@@ -289,6 +265,38 @@
     updateBannerVisibility();
   }
 
+  function showConversationTitle(conversationId, title) {
+    if (!conversationId || !RE_DATE.test(title)) return;
+
+    datedTitle[conversationId] = title;
+
+    var displayTitle = getDisplayTitle(title);
+    renamedDisplayTitle[conversationId] = displayTitle;
+    showBanner(displayTitle);
+
+    if (document.title !== displayTitle) {
+      document.title = displayTitle;
+    }
+  }
+
+  function refreshProjectDisplay() {
+    var conversationId = getConversationIdFromUrl();
+    var title = conversationId ? datedTitle[conversationId] : null;
+    if (!title) return;
+
+    var displayTitle = getDisplayTitle(title);
+    if (renamedDisplayTitle[conversationId] === displayTitle && document.title === displayTitle) {
+      return;
+    }
+
+    renamedDisplayTitle[conversationId] = displayTitle;
+    showBanner(displayTitle);
+
+    if (document.title !== displayTitle) {
+      document.title = displayTitle;
+    }
+  }
+
   function hideBanner() {
     bannerVisible = false;
     updateBannerVisibility();
@@ -423,6 +431,13 @@
           throw new Error("Empty conversation title");
         }
 
+        if (RE_DATE.test(apiTitle)) {
+          renameState[conversationId] = "done";
+          showConversationTitle(conversationId, apiTitle);
+
+          return null;
+        }
+
         if (!yyyymmdd) {
           delete renameState[conversationId];
           startTimestampMonitor(conversationId);
@@ -437,24 +452,7 @@
 
         if (newApiTitle === apiTitle) {
           renameState[conversationId] = "done";
-          renamedDisplayTitle[conversationId] = newDisplayTitle;
-          showBanner(newDisplayTitle);
-          document.title = newDisplayTitle;
-
-          return null;
-        }
-
-        return patchConversationTitle(conversationId, newApiTitle, data.token).then(function () {
-          renameState[conversationId] = "done";
-
-          var displayTitle = newDisplayTitle;
-
-          renamedDisplayTitle[conversationId] = displayTitle;
-          showBanner(displayTitle);
-
-          if (!isNeutralTitle(displayTitle) && RE_DATE.test(displayTitle)) {
-            document.title = displayTitle;
-          }
+          showConversationTitle(conversationId, newApiTitle);
 
           setTimeout(evaluateCurrentPage, 500);
           setTimeout(evaluateCurrentPage, 1500);
@@ -498,7 +496,11 @@
 
       if (RE_DATE.test(title)) {
         stopTimestampMonitor();
-        showBanner(title);
+        if (renamedDisplayTitle[conversationId] === title && datedTitle[conversationId]) {
+          showBanner(title);
+        } else {
+          showConversationTitle(conversationId, title);
+        }
         return;
       }
 
@@ -562,7 +564,11 @@
       }
 
       stopTimestampMonitor();
-      showBanner(title);
+      if (renamedDisplayTitle[conversationId] === title && datedTitle[conversationId]) {
+        showBanner(title);
+      } else {
+        showConversationTitle(conversationId, title);
+      }
       return;
     }
 
@@ -659,11 +665,7 @@
 
     urlPollHandle = setInterval(function () {
       onRouteMaybeChanged();
-
-      var conversationId = getConversationIdFromUrl();
-      if (conversationId && !renameState[conversationId]) {
-        evaluateCurrentPage();
-      }
+      refreshProjectDisplay();
     }, URL_POLL_MS);
   }
 
