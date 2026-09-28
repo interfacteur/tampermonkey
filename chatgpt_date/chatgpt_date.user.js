@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Fixed Title Banner Auto Date
 // @namespace    local
-// @version      1.5.0
+// @version      1.7.0
 // @description  Fixed banner with dated chat title. One-shot server rename after stable title and timestamp.
 // @downloadURL  https://raw.githubusercontent.com/interfacteur/tampermonkey/main/chatgpt_date/chatgpt_date.user.js
 // @updateURL    https://raw.githubusercontent.com/interfacteur/tampermonkey/main/chatgpt_date/chatgpt_date.user.js
@@ -54,6 +54,35 @@
     return m ? m[1] : null;
   }
 
+  function getProjectIdFromUrl() {
+    var m = location.pathname.match(/\/g\/(g-p-[^/]+)\/c\/[a-z0-9-]+/i);
+    return m ? m[1] : null;
+  }
+
+  function getProjectTitle() {
+    var projectId = getProjectIdFromUrl();
+    if (!projectId) return null;
+
+    var links = document.querySelectorAll('a[href$="/project"]');
+
+    for (var i = 0; i < links.length; i++) {
+      var pathname;
+
+      try {
+        pathname = new URL(links[i].getAttribute("href"), location.origin).pathname;
+      } catch (e) {
+        continue;
+      }
+
+      if (pathname === "/g/" + projectId + "/project") {
+        var title = String(links[i].textContent || "").trim();
+        return title || null;
+      }
+    }
+
+    return null;
+  }
+
   function cleanDocumentTitle(value) {
     var t = String(value || "").trim();
     t = t.replace(/^ChatGPT\s*-\s*/i, "").trim();
@@ -71,6 +100,36 @@
 
   function addDateSuffix(title, yyyymmdd) {
     return removeDateSuffix(title) + " {" + yyyymmdd + "}";
+  }
+
+  function getDateSuffix(title) {
+    var m = String(title || "").match(/ \{([0-9]{8})\}$/);
+    return m ? m[1] : null;
+  }
+
+  function addProjectPrefix(title, projectTitle) {
+    var baseTitle = removeDateSuffix(title);
+    var yyyymmdd = getDateSuffix(title);
+    if (!projectTitle) return yyyymmdd ? addDateSuffix(baseTitle, yyyymmdd) : baseTitle;
+
+    var prefix = projectTitle + " - ";
+    var displayTitle = baseTitle.slice(0, prefix.length) === prefix
+      ? baseTitle
+      : prefix + baseTitle;
+
+    return yyyymmdd ? addDateSuffix(displayTitle, yyyymmdd) : displayTitle;
+  }
+
+  function removeProjectPrefix(title, projectTitle) {
+    var baseTitle = removeDateSuffix(title);
+    if (!projectTitle) return baseTitle;
+
+    var prefix = projectTitle + " - ";
+    if (baseTitle.slice(0, prefix.length) === prefix) {
+      return baseTitle.slice(prefix.length).trim();
+    }
+
+    return baseTitle;
   }
 
   function getHistDate() {
@@ -311,6 +370,13 @@
   function autoRenameOnce(conversationId, fallbackDate) {
     if (!conversationId) return;
 
+    var projectId = getProjectIdFromUrl();
+    var projectTitle = getProjectTitle();
+
+    // On project routes, wait until the breadcrumb has rendered. Otherwise the
+    // one-shot rename would permanently omit the project prefix.
+    if (projectId && !projectTitle) return;
+
     if (renameState[conversationId]) {
       return;
     }
@@ -328,6 +394,19 @@
 
     getAccessToken()
       .then(function (token) {
+        // A project conversation can return 404 for the legacy GET endpoint
+        // even though its title can still be patched. Once the DOM timestamp
+        // fallback has supplied a date, use the stable document title instead
+        // of making the same failing GET request again.
+        if (fallbackDate) {
+          return {
+            token: token,
+            convo: {
+              title: cleanDocumentTitle(document.title)
+            }
+          };
+        }
+
         return fetchConversation(conversationId, token).then(function (convo) {
           return {
             token: token,
@@ -338,21 +417,10 @@
       .then(function (data) {
         var convo = data.convo;
         var apiTitle = convo && typeof convo.title === "string" ? convo.title.trim() : "";
-        var yyyymmdd = getConversationDate(convo) || fallbackDate;
+        var yyyymmdd = getConversationDate(convo) || fallbackDate || getDateSuffix(apiTitle);
 
         if (!apiTitle) {
           throw new Error("Empty conversation title");
-        }
-
-        if (RE_DATE.test(apiTitle)) {
-          renameState[conversationId] = "done";
-
-          var displayTitleAlready = cleanDocumentTitle(document.title);
-          if (RE_DATE.test(displayTitleAlready)) {
-            showBanner(displayTitleAlready);
-          }
-
-          return null;
         }
 
         if (!yyyymmdd) {
@@ -361,18 +429,25 @@
           return null;
         }
 
-        var newApiTitle = addDateSuffix(apiTitle, yyyymmdd);
+        // Keep the persisted conversation title independent from its project.
+        // This also repairs titles written by versions 1.6.0/1.6.1 while the
+        // conversation is still in the project whose prefix was persisted.
+        var newApiTitle = addDateSuffix(removeProjectPrefix(apiTitle, projectTitle), yyyymmdd);
+        var newDisplayTitle = addProjectPrefix(newApiTitle, projectTitle);
+
+        if (newApiTitle === apiTitle) {
+          renameState[conversationId] = "done";
+          renamedDisplayTitle[conversationId] = newDisplayTitle;
+          showBanner(newDisplayTitle);
+          document.title = newDisplayTitle;
+
+          return null;
+        }
 
         return patchConversationTitle(conversationId, newApiTitle, data.token).then(function () {
           renameState[conversationId] = "done";
 
-          var displayTitle = cleanDocumentTitle(document.title);
-
-          if (isNeutralTitle(displayTitle)) {
-            displayTitle = newApiTitle;
-          } else {
-            displayTitle = addDateSuffix(displayTitle, yyyymmdd);
-          }
+          var displayTitle = newDisplayTitle;
 
           renamedDisplayTitle[conversationId] = displayTitle;
           showBanner(displayTitle);
@@ -391,7 +466,7 @@
         if (!fallbackDate) {
           delete renameState[conversationId];
           startTimestampMonitor(conversationId);
-          warn("[cgpt-title-date] backend date skipped, waiting for DOM timestamp:", e && e.message ? e.message : e);
+          warn("[cgpt-title-date] conversation GET unavailable; waiting for DOM timestamp before trying a direct title PATCH:", e && e.message ? e.message : e);
           return;
         }
 
@@ -468,6 +543,24 @@
     }
 
     if (RE_DATE.test(title)) {
+      var projectTitle = getProjectTitle();
+
+      // Versions 1.6.0/1.6.1 accidentally persisted the current project
+      // prefix. Remove it from the backend while keeping it in the display.
+      if (projectTitle && title.slice(0, projectTitle.length + 3) === projectTitle + " - ") {
+        autoRenameOnce(conversationId, getDateSuffix(title));
+        return;
+      }
+
+      if (projectTitle) {
+        var displayTitle = addProjectPrefix(title, projectTitle);
+        renameState[conversationId] = "done";
+        renamedDisplayTitle[conversationId] = displayTitle;
+        showBanner(displayTitle);
+        document.title = displayTitle;
+        return;
+      }
+
       stopTimestampMonitor();
       showBanner(title);
       return;
@@ -566,6 +659,11 @@
 
     urlPollHandle = setInterval(function () {
       onRouteMaybeChanged();
+
+      var conversationId = getConversationIdFromUrl();
+      if (conversationId && !renameState[conversationId]) {
+        evaluateCurrentPage();
+      }
     }, URL_POLL_MS);
   }
 

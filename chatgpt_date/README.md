@@ -8,9 +8,13 @@ Fichier principal : `chatgpt_date.user.js`.
 
 ## Fonction
 
-Le script vise à rendre les conversations ChatGPT plus facilement repérables dans le navigateur, la barre latérale et les exports personnels, en suffixant les titres avec une date au format `{YYYYMMDD}`.
+Le script vise à rendre les conversations ChatGPT plus facilement repérables dans le navigateur et les exports personnels, en suffixant les titres avec une date au format `{YYYYMMDD}`. Dans un projet, il préfixe le titre affiché avec le nom du projet lu dans le fil d’Ariane, sans enregistrer ce préfixe dans le nom de la conversation côté ChatGPT.
 
 Exemple : `Partition de Goldbach {20250806}`.
+
+Exemple dans un projet : `Recherche - Partition de Goldbach {20250806}`.
+
+Dans cet exemple, le titre enregistré reste `Partition de Goldbach {20250806}`. Le préfixe `Recherche - ` est limité à la bannière, au titre de l’onglet et aux exports qui utilisent ce titre d’affichage. Ainsi, déplacer la conversation vers un autre projet ne crée pas une chaîne de préfixes et les listes de conversations des projets restent compactes.
 
 ## Comportement attendu
 
@@ -56,10 +60,12 @@ Le script combine plusieurs signaux afin d’éviter les traitements prématuré
 - surveillance de l’URL pour détecter les changements de conversation dans l’application monopage ;
 - observation du titre du document ;
 - attente d’un titre stabilisé ;
-- récupération backend ponctuelle de `conversation.create_time`, avec fallback sur la première date de message exploitable puis sur `.chatgpt-timestamp` ;
+- sur une route de projet, attente du fil d’Ariane et lecture du nom du projet pour le seul titre d’affichage ;
+- récupération backend ponctuelle de `conversation.create_time`, avec fallback sur la première date de message exploitable puis sur `.chatgpt-timestamp` ; si la lecture backend d’une conversation de projet renvoie `404`, le fallback DOM tente directement le renommage sans répéter cette lecture ;
 - recherche temporaire, limitée dans le temps, de `.chatgpt-timestamp` lorsque le backend ne fournit pas de date exploitable ;
 - affichage de la bannière seulement lorsqu’un titre daté peut être affiché ;
-- tentative de renommage limitée à une seule fois par conversation et par chargement du script.
+- tentative de renommage limitée à une seule fois par conversation et par chargement du script ;
+- suppression automatique du préfixe serveur ajouté par les versions `1.6.0` et `1.6.1`, lorsque la conversation se trouve encore dans le projet correspondant.
 
 Le script évite de traiter le titre immédiatement après un changement d’URL, car ChatGPT peut conserver fugitivement l’ancien titre avant de le remplacer par `ChatGPT`, puis par le titre réel de la nouvelle conversation.
 
@@ -92,7 +98,7 @@ Ergonomie prévue :
 - Le comportement de ChatGPT peut changer sans préavis.
 - Les endpoints internes utilisés par le script peuvent changer ou cesser de fonctionner.
 - Le titre de page peut être fugitivement faux pendant les transitions entre conversations.
-- Dans les projets, le titre affiché par l’onglet peut inclure le nom du projet, alors que le titre serveur de la conversation peut ne pas l’inclure.
+- Dans les projets, la détection du nom dépend du lien vers `/g/<identifiant>/project` présent dans le fil d’Ariane de ChatGPT.
 - Le script dépend de la présence d’un élément `.chatgpt-timestamp` injecté ou rendu dans la page pour calculer la date historique.
 
 ## Dépannage
