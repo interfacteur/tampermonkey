@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Fixed Title Banner Auto Date
 // @namespace    local
-// @version      1.6.1
+// @version      1.7.0
 // @description  Fixed banner with dated chat title. One-shot server rename after stable title and timestamp.
 // @downloadURL  https://raw.githubusercontent.com/interfacteur/tampermonkey/main/chatgpt_date/chatgpt_date.user.js
 // @updateURL    https://raw.githubusercontent.com/interfacteur/tampermonkey/main/chatgpt_date/chatgpt_date.user.js
@@ -109,12 +109,27 @@
 
   function addProjectPrefix(title, projectTitle) {
     var baseTitle = removeDateSuffix(title);
+    var yyyymmdd = getDateSuffix(title);
+    if (!projectTitle) return yyyymmdd ? addDateSuffix(baseTitle, yyyymmdd) : baseTitle;
+
+    var prefix = projectTitle + " - ";
+    var displayTitle = baseTitle.slice(0, prefix.length) === prefix
+      ? baseTitle
+      : prefix + baseTitle;
+
+    return yyyymmdd ? addDateSuffix(displayTitle, yyyymmdd) : displayTitle;
+  }
+
+  function removeProjectPrefix(title, projectTitle) {
+    var baseTitle = removeDateSuffix(title);
     if (!projectTitle) return baseTitle;
 
     var prefix = projectTitle + " - ";
-    if (baseTitle.slice(0, prefix.length) === prefix) return baseTitle;
+    if (baseTitle.slice(0, prefix.length) === prefix) {
+      return baseTitle.slice(prefix.length).trim();
+    }
 
-    return prefix + baseTitle;
+    return baseTitle;
   }
 
   function getHistDate() {
@@ -414,15 +429,17 @@
           return null;
         }
 
-        var newApiTitle = addDateSuffix(addProjectPrefix(apiTitle, projectTitle), yyyymmdd);
+        // Keep the persisted conversation title independent from its project.
+        // This also repairs titles written by versions 1.6.0/1.6.1 while the
+        // conversation is still in the project whose prefix was persisted.
+        var newApiTitle = addDateSuffix(removeProjectPrefix(apiTitle, projectTitle), yyyymmdd);
+        var newDisplayTitle = addProjectPrefix(newApiTitle, projectTitle);
 
         if (newApiTitle === apiTitle) {
           renameState[conversationId] = "done";
-
-          var displayTitleAlready = cleanDocumentTitle(document.title);
-          if (RE_DATE.test(displayTitleAlready)) {
-            showBanner(displayTitleAlready);
-          }
+          renamedDisplayTitle[conversationId] = newDisplayTitle;
+          showBanner(newDisplayTitle);
+          document.title = newDisplayTitle;
 
           return null;
         }
@@ -430,7 +447,7 @@
         return patchConversationTitle(conversationId, newApiTitle, data.token).then(function () {
           renameState[conversationId] = "done";
 
-          var displayTitle = newApiTitle;
+          var displayTitle = newDisplayTitle;
 
           renamedDisplayTitle[conversationId] = displayTitle;
           showBanner(displayTitle);
@@ -527,8 +544,20 @@
 
     if (RE_DATE.test(title)) {
       var projectTitle = getProjectTitle();
-      if (projectTitle && title.slice(0, projectTitle.length + 3) !== projectTitle + " - ") {
+
+      // Versions 1.6.0/1.6.1 accidentally persisted the current project
+      // prefix. Remove it from the backend while keeping it in the display.
+      if (projectTitle && title.slice(0, projectTitle.length + 3) === projectTitle + " - ") {
         autoRenameOnce(conversationId, getDateSuffix(title));
+        return;
+      }
+
+      if (projectTitle) {
+        var displayTitle = addProjectPrefix(title, projectTitle);
+        renameState[conversationId] = "done";
+        renamedDisplayTitle[conversationId] = displayTitle;
+        showBanner(displayTitle);
+        document.title = displayTitle;
         return;
       }
 
