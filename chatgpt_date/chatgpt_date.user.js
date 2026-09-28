@@ -378,6 +378,13 @@
   function autoRenameOnce(conversationId, fallbackDate) {
     if (!conversationId) return;
 
+    var projectId = getProjectIdFromUrl();
+    var projectTitle = getProjectTitle();
+
+    // On project routes, wait until the breadcrumb has rendered. Otherwise the
+    // one-shot rename would permanently omit the project prefix.
+    if (projectId && !projectTitle) return;
+
     if (renameState[conversationId]) {
       return;
     }
@@ -395,6 +402,19 @@
 
     getAccessToken()
       .then(function (token) {
+        // A project conversation can return 404 for the legacy GET endpoint
+        // even though its title can still be patched. Once the DOM timestamp
+        // fallback has supplied a date, use the stable document title instead
+        // of making the same failing GET request again.
+        if (fallbackDate) {
+          return {
+            token: token,
+            convo: {
+              title: cleanDocumentTitle(document.title)
+            }
+          };
+        }
+
         return fetchConversation(conversationId, token).then(function (convo) {
           return {
             token: token,
@@ -405,7 +425,7 @@
       .then(function (data) {
         var convo = data.convo;
         var apiTitle = convo && typeof convo.title === "string" ? convo.title.trim() : "";
-        var yyyymmdd = getConversationDate(convo) || fallbackDate;
+        var yyyymmdd = getConversationDate(convo) || fallbackDate || getDateSuffix(apiTitle);
 
         if (!apiTitle) {
           throw new Error("Empty conversation title");
@@ -424,9 +444,13 @@
           return null;
         }
 
-        var newApiTitle = addDateSuffix(apiTitle, yyyymmdd);
+        // Keep the persisted conversation title independent from its project.
+        // This also repairs titles written by versions 1.6.0/1.6.1 while the
+        // conversation is still in the project whose prefix was persisted.
+        var newApiTitle = addDateSuffix(removeProjectPrefix(apiTitle, projectTitle), yyyymmdd);
+        var newDisplayTitle = addProjectPrefix(newApiTitle, projectTitle);
 
-        return patchConversationTitle(conversationId, newApiTitle, data.token).then(function () {
+        if (newApiTitle === apiTitle) {
           renameState[conversationId] = "done";
           showConversationTitle(conversationId, newApiTitle);
 
@@ -440,7 +464,7 @@
         if (!fallbackDate) {
           delete renameState[conversationId];
           startTimestampMonitor(conversationId);
-          warn("[cgpt-title-date] backend date skipped, waiting for DOM timestamp:", e && e.message ? e.message : e);
+          warn("[cgpt-title-date] conversation GET unavailable; waiting for DOM timestamp before trying a direct title PATCH:", e && e.message ? e.message : e);
           return;
         }
 
@@ -521,6 +545,24 @@
     }
 
     if (RE_DATE.test(title)) {
+      var projectTitle = getProjectTitle();
+
+      // Versions 1.6.0/1.6.1 accidentally persisted the current project
+      // prefix. Remove it from the backend while keeping it in the display.
+      if (projectTitle && title.slice(0, projectTitle.length + 3) === projectTitle + " - ") {
+        autoRenameOnce(conversationId, getDateSuffix(title));
+        return;
+      }
+
+      if (projectTitle) {
+        var displayTitle = addProjectPrefix(title, projectTitle);
+        renameState[conversationId] = "done";
+        renamedDisplayTitle[conversationId] = displayTitle;
+        showBanner(displayTitle);
+        document.title = displayTitle;
+        return;
+      }
+
       stopTimestampMonitor();
       if (renamedDisplayTitle[conversationId] === title && datedTitle[conversationId]) {
         showBanner(title);
