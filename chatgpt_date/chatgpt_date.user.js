@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Fixed Title Banner Auto Date
 // @namespace    local
-// @version      1.8.0
+// @version      1.8.1
 // @description  Fixed banner with dated chat title. One-shot server rename after stable title and timestamp.
 // @downloadURL  https://raw.githubusercontent.com/interfacteur/tampermonkey/main/chatgpt_date/chatgpt_date.user.js
 // @updateURL    https://raw.githubusercontent.com/interfacteur/tampermonkey/main/chatgpt_date/chatgpt_date.user.js
@@ -56,7 +56,7 @@
   }
 
   function getProjectIdFromUrl() {
-    var m = location.pathname.match(/\/g\/(g-p-[^/]+)\/c\/[a-z0-9-]+/i);
+    var m = location.pathname.match(/\/g\/(g-p-[a-f0-9]{32})(?:-[^/]+)?\/c\/[a-z0-9-]+/i);
     return m ? m[1] : null;
   }
 
