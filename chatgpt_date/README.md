@@ -97,7 +97,7 @@ Ergonomie prévue :
 - Le comportement de ChatGPT peut changer sans préavis.
 - Les endpoints internes utilisés par le script peuvent changer ou cesser de fonctionner.
 - Le titre de page peut être fugitivement faux pendant les transitions entre conversations.
-- Dans les projets, la détection du nom rapproche l’identifiant stable du lien `/g/<identifiant>/project` présent dans le fil d’Ariane de l’URL de conversation, qui peut ajouter un slug après cet identifiant. Son rendu tardif ne bloque ni la datation ni la bannière : l’affichage est enrichi localement dès qu’il devient disponible.
+- Dans les projets, la détection du nom rapproche l’identifiant stable du lien `/g/<identifiant>/project` présent dans le fil d’Ariane de l’URL de conversation, qui peut ajouter un slug — éventuellement vide — après cet identifiant. Son rendu tardif ne bloque ni la datation ni la bannière : l’affichage est enrichi localement dès qu’il devient disponible.
 - Le script dépend de la présence d’un élément `.chatgpt-timestamp` injecté ou rendu dans la page pour calculer la date historique.
 
 ## Dépannage
