@@ -8,9 +8,11 @@ Fichier principal : `chatgpt_date.user.js`.
 
 ## Fonction
 
-Le script vise à rendre les conversations ChatGPT plus facilement repérables dans le navigateur, la barre latérale et les exports personnels, en suffixant les titres avec une date au format `{YYYYMMDD}`.
+Le script vise à rendre les conversations ChatGPT plus facilement repérables dans le navigateur, la barre latérale et les exports personnels, en suffixant les titres enregistrés avec une date au format `{YYYYMMDD}`. Dans un projet, le nom lu dans le fil d’Ariane préfixe uniquement le titre affiché dans la bannière et l’onglet ; il n’est jamais ajouté au titre enregistré côté ChatGPT.
 
 Exemple : `Partition de Goldbach {20250806}`.
+
+Exemple dans le projet `Recherche` : la bannière et l’onglet affichent `Recherche - Partition de Goldbach {20250806}`, tandis que le titre enregistré reste `Partition de Goldbach {20250806}`. Les exports qui utilisent le titre de l’onglet conservent ainsi le contexte du projet sans encombrer l’index du projet ni créer une chaîne de préfixes après un déplacement.
 
 ## Comportement attendu
 
@@ -18,7 +20,8 @@ Sur une page de conversation déjà horodatée :
 
 - détection de l’URL de conversation ;
 - lecture du titre de page ;
-- affichage immédiat de la bannière ;
+- affichage immédiat de la bannière datée ;
+- ajout local du projet dès que son fil d’Ariane est disponible ;
 - aucun renommage automatique.
 
 Sur une page de conversation non horodatée :
@@ -29,7 +32,7 @@ Sur une page de conversation non horodatée :
 - extraction de la date historique ;
 - appel ponctuel aux endpoints internes nécessaires ;
 - renommage unique du titre de la conversation ;
-- affichage de la bannière datée.
+- affichage de la bannière datée, éventuellement préfixée localement par le projet.
 
 Hors page de conversation, par exemple sur la racine ChatGPT ou la racine d’un projet, le script garde seulement une surveillance légère afin de détecter une arrivée ultérieure sur `/c/<id>` : il ne doit afficher aucune bannière, ne lancer aucun moniteur timestamp et ne faire aucune requête backend.
 
@@ -56,6 +59,7 @@ Le script combine plusieurs signaux afin d’éviter les traitements prématuré
 - surveillance de l’URL pour détecter les changements de conversation dans l’application monopage ;
 - observation du titre du document ;
 - attente d’un titre stabilisé ;
+- lecture locale du projet depuis le fil d’Ariane, indépendamment du renommage backend ;
 - récupération backend ponctuelle de `conversation.create_time`, avec fallback sur la première date de message exploitable puis sur `.chatgpt-timestamp` ;
 - recherche temporaire, limitée dans le temps, de `.chatgpt-timestamp` lorsque le backend ne fournit pas de date exploitable ;
 - affichage de la bannière seulement lorsqu’un titre daté peut être affiché ;
@@ -92,7 +96,7 @@ Ergonomie prévue :
 - Le comportement de ChatGPT peut changer sans préavis.
 - Les endpoints internes utilisés par le script peuvent changer ou cesser de fonctionner.
 - Le titre de page peut être fugitivement faux pendant les transitions entre conversations.
-- Dans les projets, le titre affiché par l’onglet peut inclure le nom du projet, alors que le titre serveur de la conversation peut ne pas l’inclure.
+- Dans les projets, la détection du nom rapproche l’identifiant stable du lien `/g/<identifiant>/project` présent dans le fil d’Ariane de l’URL de conversation, qui peut ajouter un slug — éventuellement vide — après cet identifiant. Son rendu tardif ne bloque ni la datation ni la bannière : l’affichage est enrichi localement dès qu’il devient disponible.
 - Le script dépend de la présence d’un élément `.chatgpt-timestamp` injecté ou rendu dans la page pour calculer la date historique.
 
 ## Dépannage
