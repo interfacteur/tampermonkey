@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         ChatGPT LunaTOC Auto Collapse
 // @namespace    local
-// @version      1.1.0
-// @description  Collapse LunaTOC on conversation entry and hide it outside conversations.
+// @version      1.1.1
+// @description  Collapse LunaTOC once when entering a ChatGPT conversation.
 // @match        https://chatgpt.com/*
 // @grant        none
 // @run-at       document-idle
@@ -14,29 +14,12 @@
   var BUTTON_ID = "luna-toc-toggle-btn";
   var VISIBLE_CLASS = "luna-toc-sidebar-visible";
   var HIDDEN_CLASS = "luna-toc-sidebar-hidden";
-  var DISABLED_CLASS = "tm-lunatoc-disabled";
-  var STYLE_ID = "tm-lunatoc-scope-style";
   var scheduled = false;
   var lastPathname = location.pathname;
   var collapsePending = isConversationPath(lastPathname);
 
   function isConversationPath(pathname) {
     return /\/c\/[a-z0-9-]+(?:\/|$)/i.test(pathname);
-  }
-
-  function installScopeStyle() {
-    if (document.getElementById(STYLE_ID)) return;
-
-    var style = document.createElement("style");
-    style.id = STYLE_ID;
-    style.textContent =
-      "html." + DISABLED_CLASS + " #luna-toc-react-host," +
-      "html." + DISABLED_CLASS + " #luna-toc-sidebar," +
-      "html." + DISABLED_CLASS + " #luna-toc-toggle-btn," +
-      "html." + DISABLED_CLASS + " #luna-toc-preview-tooltip," +
-      "html." + DISABLED_CLASS + " #luna-toc-button-tooltip" +
-      "{display:none!important;}";
-    (document.head || document.documentElement).appendChild(style);
   }
 
   function updateRouteState() {
@@ -58,12 +41,7 @@
   function reconcileLunaToc() {
     updateRouteState();
 
-    if (!isConversationPath(location.pathname)) {
-      document.documentElement.classList.add(DISABLED_CLASS);
-      return;
-    }
-
-    document.documentElement.classList.remove(DISABLED_CLASS);
+    if (!isConversationPath(location.pathname)) return;
     if (!collapsePending) return;
 
     var button = document.getElementById(BUTTON_ID);
@@ -121,7 +99,6 @@
   }
 
   function start() {
-    installScopeStyle();
     installDomObserver();
     installHistoryHooks();
     reconcileLunaToc();

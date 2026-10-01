@@ -4,16 +4,11 @@ Userscript Tampermonkey complémentaire à l’extension LunaTOC.
 
 Le script replie automatiquement la barre latérale LunaTOC lorsqu’on arrive sur une page de conversation ChatGPT depuis une page qui n’est pas une conversation. Il ne clique que si le bouton `#luna-toc-toggle-btn` porte la classe `luna-toc-sidebar-visible` ; un panneau déjà replié, identifié par `luna-toc-sidebar-hidden`, reste donc inchangé.
 
+Le userscript ne crée aucune feuille de style, ne déplace aucun élément LunaTOC et ne masque aucun élément. Il se limite à simuler ce clic unique ; l’affichage et le masquage restent entièrement gérés par LunaTOC et ChatGPT.
+
 ## Périmètre
 
-Le script est chargé sur `https://chatgpt.com/*`. Il replie LunaTOC lorsque le chemin contient `/c/<identifiant>` et masque ses éléments visuels sur les autres chemins.
-
-Il masque tous les éléments visuels LunaTOC connus sur :
-
-- `https://chatgpt.com/codex...` ;
-- la racine de ChatGPT ;
-- les racines de projets de forme `/g/<identifiant>/project` ;
-- les autres pages sans conversation.
+Le script est chargé sur `https://chatgpt.com/*`. Il peut cliquer sur LunaTOC uniquement lorsque le chemin contient `/c/<identifiant>`. Sur les autres chemins — notamment Codex et les racines de projets — il n’effectue aucune action.
 
 Il fonctionne sur les conversations ordinaires `/c/<identifiant>` et sur les conversations de projet `/g/<identifiant-ou-slug>/c/<identifiant>`.
 
@@ -26,7 +21,7 @@ Lors d’un passage direct d’une conversation à une autre, la barre conserve 
 - suivi des navigations internes pour distinguer `chat → chat` de `chat → hors chat → chat` ;
 - aucun clic lorsque la barre est déjà repliée ;
 - un seul clic automatique par entrée dans une séquence de conversations ;
-- masquage hors conversation de `#luna-toc-react-host`, `#luna-toc-sidebar`, `#luna-toc-toggle-btn`, `#luna-toc-preview-tooltip` et `#luna-toc-button-tooltip` ;
+- aucune modification de style ou de position des éléments LunaTOC ;
 - aucun intervalle de scrutation permanent.
 
 ## Installation
