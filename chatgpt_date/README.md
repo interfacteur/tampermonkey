@@ -63,7 +63,8 @@ Le script combine plusieurs signaux afin d’éviter les traitements prématuré
 - récupération backend ponctuelle de `conversation.create_time`, avec fallback sur la première date de message exploitable puis sur `.chatgpt-timestamp` ;
 - recherche temporaire, limitée dans le temps, de `.chatgpt-timestamp` lorsque le backend ne fournit pas de date exploitable ;
 - affichage de la bannière seulement lorsqu’un titre daté peut être affiché ;
-- tentative de renommage limitée à une seule fois par conversation et par chargement du script.
+- tentative de renommage limitée à une seule fois par conversation et par chargement du script ;
+- suppression automatique du préfixe serveur ajouté par les versions `1.6.0` et `1.6.1`, lorsque la conversation se trouve encore dans le projet correspondant.
 
 Le script évite de traiter le titre immédiatement après un changement d’URL, car ChatGPT peut conserver fugitivement l’ancien titre avant de le remplacer par `ChatGPT`, puis par le titre réel de la nouvelle conversation.
 
