@@ -10,6 +10,7 @@ Ce dépôt regroupe des userscripts destinés à modifier ou compléter localeme
 |---|---|---|
 | `chatgpt_date` | `chatgpt_date.user.js` | Ajout d'une bannière de titre datée dans ChatGPT et, lorsque c'est possible, horodatage automatique du titre de la conversation. |
 | `chatgpt_export` | `chatgpt_export.user.js` | Export de la conversation ChatGPT courante en JSON, Markdown et HTML. |
+| `chatgpt_lunatoc` | `chatgpt_lunatoc.user.js` | Repli automatique de la barre latérale LunaTOC sur les seules pages de conversation ChatGPT. |
 
 ## Installation générale
 
