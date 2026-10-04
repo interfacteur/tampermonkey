@@ -2,7 +2,7 @@
 
 Userscript Tampermonkey complémentaire à l’extension LunaTOC.
 
-Le script replie automatiquement la barre latérale LunaTOC lorsqu’on arrive sur une page de conversation ChatGPT depuis une page qui n’est pas une conversation. Il ne clique que si le bouton `#luna-toc-toggle-btn` porte la classe `luna-toc-sidebar-visible` ; un panneau déjà replié, identifié par `luna-toc-sidebar-hidden`, reste donc inchangé.
+Le script replie automatiquement la barre latérale LunaTOC 10 secondes après son apparition lorsqu’on arrive sur une page de conversation ChatGPT depuis une page qui n’est pas une conversation. Il ne clique que si le bouton `#luna-toc-toggle-btn` porte la classe `luna-toc-sidebar-visible` ; un panneau déjà replié, identifié par `luna-toc-sidebar-hidden`, reste donc inchangé.
 
 Le userscript ne crée aucune feuille de style, ne déplace aucun élément LunaTOC et ne masque aucun élément. Il se limite à simuler ce clic unique ; l’affichage et le masquage restent entièrement gérés par LunaTOC et ChatGPT.
 
@@ -18,6 +18,7 @@ Lors d’un passage direct d’une conversation à une autre, la barre conserve 
 
 - vérification initiale à la fin du chargement du document ;
 - observation du DOM pour attendre les éléments LunaTOC injectés tardivement ;
+- temporisation de 10 secondes entre la détection de la barre visible et le clic ;
 - suivi des navigations internes pour distinguer `chat → chat` de `chat → hors chat → chat` ;
 - aucun clic lorsque la barre est déjà repliée ;
 - un seul clic automatique par entrée dans une séquence de conversations ;
