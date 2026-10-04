@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         ChatGPT LunaTOC Auto Collapse
 // @namespace    local
-// @version      1.1.1
-// @description  Collapse LunaTOC once when entering a ChatGPT conversation.
+// @version      1.1.2
+// @description  Collapse LunaTOC after 10 seconds when entering a ChatGPT conversation.
 // @match        https://chatgpt.com/*
 // @grant        none
 // @run-at       document-idle
@@ -14,7 +14,9 @@
   var BUTTON_ID = "luna-toc-toggle-btn";
   var VISIBLE_CLASS = "luna-toc-sidebar-visible";
   var HIDDEN_CLASS = "luna-toc-sidebar-hidden";
+  var COLLAPSE_DELAY_MS = 10000;
   var scheduled = false;
+  var collapseTimer = null;
   var lastPathname = location.pathname;
   var collapsePending = isConversationPath(lastPathname);
 
@@ -33,12 +35,15 @@
 
     if (!isConversation) {
       collapsePending = false;
+      clearTimeout(collapseTimer);
+      collapseTimer = null;
     } else if (!wasConversation) {
       collapsePending = true;
     }
   }
 
-  function reconcileLunaToc() {
+  function collapseLunaToc() {
+    collapseTimer = null;
     updateRouteState();
 
     if (!isConversationPath(location.pathname)) return;
@@ -56,6 +61,28 @@
 
     collapsePending = false;
     button.click();
+  }
+
+  function reconcileLunaToc() {
+    updateRouteState();
+
+    if (!isConversationPath(location.pathname)) return;
+    if (!collapsePending) return;
+
+    var button = document.getElementById(BUTTON_ID);
+    if (!button) return;
+
+    if (button.classList.contains(HIDDEN_CLASS)) {
+      collapsePending = false;
+      clearTimeout(collapseTimer);
+      collapseTimer = null;
+      return;
+    }
+
+    if (!button.classList.contains(VISIBLE_CLASS)) return;
+    if (collapseTimer !== null) return;
+
+    collapseTimer = setTimeout(collapseLunaToc, COLLAPSE_DELAY_MS);
   }
 
   function scheduleCollapse() {
