@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT export current conversation JSON MD HTML
 // @namespace    local
-// @version      1.2.0
+// @version      1.2.1
 // @description  Export current ChatGPT conversation from backend data as JSON, Markdown, and HTML.
 // @match        https://chatgpt.com/*
 // @match        https://chat.openai.com/*
@@ -197,7 +197,9 @@
 
     references.forEach(function (ref) {
       var matched = ref && ref.matched_text ? String(ref.matched_text) : "";
-      if (!matched || text.indexOf(matched) === -1) return;
+      var isSupportedMarker = /^\uE200(?:cite|entity)\uE202[^\uE201]*\uE201$/.test(matched);
+
+      if (!isSupportedMarker || text.indexOf(matched) === -1) return;
 
       text = text.split(matched).join(referenceReplacement(ref));
     });
