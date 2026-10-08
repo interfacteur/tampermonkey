@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT export current conversation JSON MD HTML
 // @namespace    local
-// @version      1.1.0
+// @version      1.2.0
 // @description  Export current ChatGPT conversation from backend data as JSON, Markdown, and HTML.
 // @match        https://chatgpt.com/*
 // @match        https://chat.openai.com/*
@@ -115,8 +115,106 @@
     };
   }
 
-  function stripCitations(str) {
-    return String(str || "").replace(/\u3010[^\u3011]*\u3011/g, "");
+  function escapeMarkdownLabel(str) {
+    return String(str || "").replace(/([\\[\]])/g, "\\$1");
+  }
+
+  function markdownLink(label, url) {
+    var value = String(url || "").trim();
+
+    if (!/^https?:\/\//i.test(value) || /[\s<>]/.test(value)) return "";
+
+    return "[" + escapeMarkdownLabel(label || value) + "](" + value + ")";
+  }
+
+  function linkFromReferenceItem(item) {
+    if (!item || typeof item !== "object") return "";
+
+    var url = item.url || item.href || item.link;
+    var label = item.title || item.name || item.site_name || item.domain || url;
+
+    return markdownLink(label, url);
+  }
+
+  function referenceReplacement(ref) {
+    if (!ref || typeof ref !== "object") return "";
+
+    var matched = String(ref.matched_text || "");
+
+    if (ref.type === "entity" || matched.indexOf("\uE200entity\uE202") === 0) {
+      if (ref.name) return String(ref.name);
+
+      var entityMatch = matched.match(/\uE200entity\uE202(\[[\s\S]*\])\uE201/);
+      if (entityMatch) {
+        try {
+          var entityParts = JSON.parse(entityMatch[1]);
+          if (entityParts[1]) return String(entityParts[1]);
+        } catch (_) {
+          // Fall through to the generic marker cleanup below.
+        }
+      }
+    }
+
+    var alt = String(ref.alt || "").trim();
+    var altPattern = /\[([^\]\n]+)\]\((https?:\/\/(?:[^()\s]|\([^()\s]*\))+)\)/gi;
+    var altLinks = [];
+    var altLink;
+
+    while ((altLink = altPattern.exec(alt)) !== null) {
+      var parsedAltLink = markdownLink(altLink[1], altLink[2]);
+      if (parsedAltLink && altLinks.indexOf(parsedAltLink) === -1) {
+        altLinks.push(parsedAltLink);
+      }
+    }
+
+    if (altLinks.length) {
+      return altLinks.join(", ");
+    }
+
+    var directLink = linkFromReferenceItem(ref);
+    if (directLink) return directLink;
+
+    var groups = [ref.items, ref.fallback_items, ref.supporting_websites];
+
+    for (var i = 0; i < groups.length; i += 1) {
+      var items = groups[i];
+      if (!Array.isArray(items)) continue;
+
+      for (var j = 0; j < items.length; j += 1) {
+        var itemLink = linkFromReferenceItem(items[j]);
+        if (itemLink) return itemLink;
+      }
+    }
+
+    return "";
+  }
+
+  function resolveContentReferences(str, metadata) {
+    var text = String(str || "");
+    var references = metadata && Array.isArray(metadata.content_references)
+      ? metadata.content_references
+      : [];
+
+    references.forEach(function (ref) {
+      var matched = ref && ref.matched_text ? String(ref.matched_text) : "";
+      if (!matched || text.indexOf(matched) === -1) return;
+
+      text = text.split(matched).join(referenceReplacement(ref));
+    });
+
+    text = text.replace(/\uE200entity\uE202([^\uE201]*)\uE201/g, function (_, payload) {
+      try {
+        var parts = JSON.parse(payload);
+        return parts[1] ? String(parts[1]) : "";
+      } catch (_) {
+        return "";
+      }
+    });
+
+    return text
+      .replace(/\uE200cite\uE202[^\uE201]*\uE201/g, "")
+      .replace(/\uE200map\uE201/g, "")
+      .replace(/\u3010[^\u3011]*\u3011/g, "");
   }
 
   function escapeHtml(str) {
@@ -178,15 +276,15 @@
     var content = msg.content;
     var parts = content.parts || [];
 
+    var text = "";
+
     if (Array.isArray(parts) && parts.length) {
-      return stripCitations(parts.map(partToText).filter(Boolean).join("\n")).trim();
+      text = parts.map(partToText).filter(Boolean).join("\n");
+    } else if (typeof content.text === "string") {
+      text = content.text;
     }
 
-    if (typeof content.text === "string") {
-      return stripCitations(content.text).trim();
-    }
-
-    return "";
+    return resolveContentReferences(text, msg.metadata).trim();
   }
 
   function getOrderedMessages(convo) {
@@ -269,48 +367,124 @@
     return lines.join("\n");
   }
 
+  function renderInlineMarkdown(text) {
+    var raw = String(text || "");
+    var tokens = [];
+
+    function token(html) {
+      var index = tokens.length;
+      tokens.push(html);
+      return "\uE100" + index + "\uE101";
+    }
+
+    raw = raw.replace(/`([^`\n]+)`/g, function (_, code) {
+      return token("<code>" + escapeHtml(code) + "</code>");
+    });
+
+    raw = raw.replace(/\[([^\]\n]+)\]\((https?:\/\/(?:[^()\s]|\([^()\s]*\))+)\)/gi, function (_, label, url) {
+      return token(
+        '<a href="' + escapeHtml(url) + '" rel="noopener noreferrer" target="_blank">' +
+        escapeHtml(label) +
+        "</a>"
+      );
+    });
+
+    var safe = escapeHtml(raw)
+      .replace(/\*\*([^*\n]+)\*\*/g, "<strong>$1</strong>")
+      .replace(/__([^_\n]+)__/g, "<strong>$1</strong>")
+      .replace(/\*([^*\n]+)\*/g, "<em>$1</em>")
+      .replace(/_([^_\n]+)_/g, "<em>$1</em>");
+
+    return safe.replace(/\uE100([0-9]+)\uE101/g, function (_, index) {
+      return tokens[Number(index)] || "";
+    });
+  }
+
   function renderTextAsHtml(text) {
     var raw = String(text || "");
-    var blocks = [];
+    var codeBlocks = [];
 
     raw = raw.replace(/```([a-zA-Z0-9_-]*)\n([\s\S]*?)```/g, function (_, lang, code) {
-      var index = blocks.length;
-      blocks.push({
+      var index = codeBlocks.length;
+      codeBlocks.push({
         lang: lang || "",
         code: code || ""
       });
       return "\n\n@@CODE_BLOCK_" + index + "@@\n\n";
     });
 
-    var safe = escapeHtml(raw);
+    var html = [];
+    var paragraph = [];
+    var listItems = [];
+    var listType = null;
 
-    safe = safe.replace(/`([^`\n]+)`/g, function (_, code) {
-      return "<code>" + code + "</code>";
+    function flushParagraph() {
+      if (!paragraph.length) return;
+      html.push("<p>" + paragraph.map(renderInlineMarkdown).join("<br>") + "</p>");
+      paragraph = [];
+    }
+
+    function flushList() {
+      if (!listItems.length) return;
+      html.push(
+        "<" + listType + ">" +
+        listItems.map(function (item) {
+          return "<li>" + renderInlineMarkdown(item) + "</li>";
+        }).join("") +
+        "</" + listType + ">"
+      );
+      listItems = [];
+      listType = null;
+    }
+
+    raw.split("\n").forEach(function (line) {
+      var codeMatch = line.trim().match(/^@@CODE_BLOCK_([0-9]+)@@$/);
+      var unordered = line.match(/^\s*[-+*]\s+(.+)$/);
+      var ordered = line.match(/^\s*[0-9]+[.)]\s+(.+)$/);
+      var heading = line.match(/^\s*(#{1,6})\s+(.+)$/);
+
+      if (codeMatch) {
+        flushParagraph();
+        flushList();
+        var block = codeBlocks[Number(codeMatch[1])];
+        var label = block.lang
+          ? '<div class="code-lang">' + escapeHtml(block.lang) + '</div>'
+          : "";
+        html.push(label + '<pre><code>' + escapeHtml(block.code) + '</code></pre>');
+        return;
+      }
+
+      if (unordered || ordered) {
+        flushParagraph();
+        var nextType = unordered ? "ul" : "ol";
+        if (listType && listType !== nextType) flushList();
+        listType = nextType;
+        listItems.push((unordered || ordered)[1]);
+        return;
+      }
+
+      if (heading) {
+        flushParagraph();
+        flushList();
+        var level = heading[1].length;
+        html.push("<h" + level + ">" + renderInlineMarkdown(heading[2]) + "</h" + level + ">");
+        return;
+      }
+
+      if (!line.trim()) {
+        flushParagraph();
+        flushList();
+        return;
+      }
+
+      flushList();
+      paragraph.push(line);
     });
 
-    safe = safe
-      .split(/\n{2,}/)
-      .map(function (p) {
-        p = p.trim();
+    flushParagraph();
+    flushList();
 
-        if (!p) return "";
-
-        var m = p.match(/^@@CODE_BLOCK_([0-9]+)@@$/);
-        if (m) {
-          var block = blocks[Number(m[1])];
-          var label = block.lang
-            ? '<div class="code-lang">' + escapeHtml(block.lang) + '</div>'
-            : "";
-
-          return label + '<pre><code>' + escapeHtml(block.code) + '</code></pre>';
-        }
-
-        return "<p>" + p.replace(/\n/g, "<br>") + "</p>";
-      })
-      .filter(Boolean)
-      .join("\n");
-
-    return safe;
+    return html.join("\n");
   }
 
   function toHtml(convo, exportTitle) {
@@ -361,6 +535,9 @@
       ".msg.assistant { background: #ffffff; }",
       ".content p { margin: 0 0 14px; }",
       ".content p:last-child { margin-bottom: 0; }",
+      ".content a { color: #0969da; text-decoration: underline; text-underline-offset: 2px; }",
+      ".content ul, .content ol { margin: 0 0 14px; padding-left: 26px; }",
+      ".content li { margin: 4px 0; }",
       "pre { margin: 14px 0; padding: 14px 16px; overflow-x: auto; border-radius: 10px; background: #0d1117; color: #c9d1d9; }",
       "pre code { background: transparent; color: inherit; padding: 0; border-radius: 0; }",
       "code { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, \"Liberation Mono\", monospace; font-size: 0.92em; background: #eeeeee; padding: 2px 5px; border-radius: 5px; }",
