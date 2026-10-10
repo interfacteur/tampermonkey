@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT export current conversation JSON MD HTML
 // @namespace    local
-// @version      1.2.1
+// @version      1.3.0
 // @description  Export current ChatGPT conversation from backend data as JSON, Markdown, and HTML.
 // @match        https://chatgpt.com/*
 // @match        https://chat.openai.com/*
@@ -219,6 +219,167 @@
       .replace(/\u3010[^\u3011]*\u3011/g, "");
   }
 
+  function normalizedKey(key) {
+    return String(key || "").toLowerCase().replace(/[^a-z0-9]/g, "");
+  }
+
+  function findValueByKeys(root, keys, maxDepth) {
+    var wanted = keys.map(normalizedKey);
+    var seen = [];
+
+    function visit(value, depth) {
+      if (!value || typeof value !== "object" || depth > maxDepth) return null;
+      if (seen.indexOf(value) !== -1) return null;
+      seen.push(value);
+
+      var names = Object.keys(value);
+
+      for (var i = 0; i < wanted.length; i += 1) {
+        for (var j = 0; j < names.length; j += 1) {
+          if (wanted[i] === normalizedKey(names[j]) && value[names[j]] != null) {
+            return value[names[j]];
+          }
+        }
+      }
+
+      for (var k = 0; k < names.length; k += 1) {
+        var found = visit(value[names[k]], depth + 1);
+        if (found != null) return found;
+      }
+
+      return null;
+    }
+
+    return visit(root, 0);
+  }
+
+  function numberValue(value) {
+    var number = Number(value);
+    return Number.isFinite(number) ? number : null;
+  }
+
+  function findCoordinates(root) {
+    var seen = [];
+
+    function visit(value, depth) {
+      if (!value || typeof value !== "object" || depth > 6) return null;
+      if (seen.indexOf(value) !== -1) return null;
+      seen.push(value);
+
+      var latitude = null;
+      var longitude = null;
+
+      Object.keys(value).forEach(function (key) {
+        var normalized = normalizedKey(key);
+        if (normalized === "latitude" || normalized === "lat") {
+          latitude = numberValue(value[key]);
+        }
+        if (normalized === "longitude" || normalized === "lng" || normalized === "lon") {
+          longitude = numberValue(value[key]);
+        }
+      });
+
+      if (latitude !== null && longitude !== null &&
+          latitude >= -90 && latitude <= 90 && longitude >= -180 && longitude <= 180) {
+        return { latitude: latitude, longitude: longitude };
+      }
+
+      var names = Object.keys(value);
+      for (var i = 0; i < names.length; i += 1) {
+        var found = visit(value[names[i]], depth + 1);
+        if (found) return found;
+      }
+
+      return null;
+    }
+
+    return visit(root, 0);
+  }
+
+  function formatAddress(value) {
+    if (typeof value === "string") return value.trim();
+    if (!value || typeof value !== "object") return "";
+
+    var fields = ["streetaddress", "addressline", "addressline1", "postalcode", "city", "country"];
+    var parts = [];
+
+    fields.forEach(function (field) {
+      Object.keys(value).forEach(function (key) {
+        if (normalizedKey(key) !== field || typeof value[key] !== "string") return;
+        var part = value[key].trim();
+        if (part && parts.indexOf(part) === -1) parts.push(part);
+      });
+    });
+
+    return parts.join(", ");
+  }
+
+  function validHttpUrl(value) {
+    var url = String(value || "").trim();
+    return /^https?:\/\/[^\s<>]+$/i.test(url) ? url : "";
+  }
+
+  function placeFromReference(ref) {
+    if (!ref || typeof ref !== "object") return null;
+
+    var data = ref.entity_data && typeof ref.entity_data === "object" ? ref.entity_data : ref;
+    var name = String(ref.name || findValueByKeys(data, ["name", "title"], 4) || "").trim();
+    if (!name) return null;
+
+    var addressValue = findValueByKeys(
+      data,
+      ["formatted_address", "full_address", "street_address", "address"],
+      5
+    );
+    var address = formatAddress(addressValue);
+    var phone = findValueByKeys(data, ["phone_number", "telephone", "phone"], 5);
+    var website = findValueByKeys(data, ["website_url", "official_website", "website"], 5);
+    var coordinates = findCoordinates(data);
+
+    return {
+      name: name,
+      address: address,
+      phone: typeof phone === "string" ? phone.trim() : "",
+      website: validHttpUrl(website),
+      latitude: coordinates ? coordinates.latitude : null,
+      longitude: coordinates ? coordinates.longitude : null
+    };
+  }
+
+  function extractPlaces(metadata) {
+    var references = metadata && Array.isArray(metadata.content_references)
+      ? metadata.content_references
+      : [];
+    var places = [];
+    var seen = Object.create(null);
+
+    references.forEach(function (ref) {
+      var matched = ref && ref.matched_text ? String(ref.matched_text) : "";
+      if (!ref || (ref.type !== "entity" && matched.indexOf("\uE200entity\uE202") !== 0)) return;
+
+      var place = placeFromReference(ref);
+      if (!place) return;
+
+      var key = place.name.toLowerCase() + "|" + String(place.latitude) + "|" + String(place.longitude);
+      if (seen[key]) return;
+      seen[key] = true;
+      places.push(place);
+    });
+
+    return places;
+  }
+
+  function openStreetMapUrl(place) {
+    if (place.latitude !== null && place.longitude !== null) {
+      return "https://www.openstreetmap.org/?mlat=" + encodeURIComponent(place.latitude) +
+        "&mlon=" + encodeURIComponent(place.longitude) +
+        "#map=17/" + encodeURIComponent(place.latitude) + "/" + encodeURIComponent(place.longitude);
+    }
+
+    var query = [place.name, place.address].filter(Boolean).join(" ");
+    return "https://www.openstreetmap.org/search?query=" + encodeURIComponent(query);
+  }
+
   function escapeHtml(str) {
     return String(str || "")
       .replace(/&/g, "&amp;")
@@ -272,7 +433,7 @@
     return "";
   }
 
-  function messageToText(msg) {
+  function messageContentToText(msg) {
     if (!msg || !msg.content) return "";
 
     var content = msg.content;
@@ -286,7 +447,11 @@
       text = content.text;
     }
 
-    return resolveContentReferences(text, msg.metadata).trim();
+    return text;
+  }
+
+  function messageToText(msg) {
+    return resolveContentReferences(messageContentToText(msg), msg && msg.metadata).trim();
   }
 
   function getOrderedMessages(convo) {
@@ -314,15 +479,19 @@
       if (msg) {
         var role = msg.author && msg.author.role ? msg.author.role : "unknown";
         var contentType = msg.content && msg.content.content_type ? msg.content.content_type : "text";
+        var rawText = messageContentToText(msg);
+        var hasMap = rawText.indexOf("\uE200map\uE201") !== -1;
         var text = messageToText(msg);
 
-        if (text) {
+        if (text || hasMap) {
           out.push({
             id: id,
             role: role,
             contentType: contentType,
             createTime: msg.create_time || null,
             updateTime: msg.update_time || null,
+            hasMap: hasMap,
+            places: hasMap ? extractPlaces(msg.metadata) : [],
             text: text
           });
         }
@@ -360,6 +529,27 @@
       }
 
       lines.push("");
+
+      if (m.hasMap) {
+        lines.push("### Lieux mentionnés");
+        lines.push("");
+
+        if (m.places.length) {
+          m.places.forEach(function (place) {
+            var details = [place.address, place.phone].filter(Boolean).join(" — ");
+            var placeLine = "- **" + place.name + "**";
+            if (details) placeLine += " — " + details;
+            placeLine += " — [Voir sur OpenStreetMap](" + openStreetMapUrl(place) + ")";
+            if (place.website) placeLine += " — [Site officiel](" + place.website + ")";
+            lines.push(placeLine);
+          });
+        } else {
+          lines.push("- Une carte était présente dans la conversation d’origine, sans lieu exploitable dans les métadonnées.");
+        }
+
+        lines.push("");
+      }
+
       lines.push(m.text);
       lines.push("");
       lines.push("---");
@@ -489,12 +679,82 @@
     return html.join("\n");
   }
 
+  function renderMapSummary(places) {
+    var content;
+
+    if (!places.length) {
+      content = '<p class="map-empty">Une carte était présente dans la conversation d’origine, sans lieu exploitable dans les métadonnées.</p>';
+    } else {
+      content = "<ul>" + places.map(function (place) {
+        var details = [place.address, place.phone].filter(Boolean).join(" — ");
+        var links = [
+          '<a href="' + escapeHtml(openStreetMapUrl(place)) + '" rel="noopener noreferrer" target="_blank">Voir sur OpenStreetMap</a>'
+        ];
+
+        if (place.website) {
+          links.push(
+            '<a href="' + escapeHtml(place.website) + '" rel="noopener noreferrer" target="_blank">Site officiel</a>'
+          );
+        }
+
+        return "<li><strong>" + escapeHtml(place.name) + "</strong>" +
+          (details ? '<span class="place-details">' + escapeHtml(details) + "</span>" : "") +
+          '<span class="place-links">' + links.join(" · ") + "</span></li>";
+      }).join("") + "</ul>";
+    }
+
+    return [
+      '<aside class="map-summary" aria-label="Lieux de la carte">',
+      "<h3>Lieux mentionnés</h3>",
+      content,
+      "</aside>"
+    ].join("\n");
+  }
+
+  function promptNavigationLabel(text) {
+    var label = String(text || "")
+      .replace(/```[\s\S]*?```/g, " code ")
+      .replace(/[`*_#>\[\]()]/g, "")
+      .replace(/\s+/g, " ")
+      .trim();
+
+    if (label.length > 88) label = label.slice(0, 85).trimEnd() + "…";
+    return label || "Prompt sans texte";
+  }
+
+  function renderPromptNavigation(messages) {
+    var prompts = [];
+
+    messages.forEach(function (message, index) {
+      if (message.role !== "user") return;
+      prompts.push({
+        anchor: "message-" + (index + 1),
+        label: promptNavigationLabel(message.text)
+      });
+    });
+
+    if (!prompts.length) return "";
+
+    return [
+      '<nav class="prompt-nav" aria-label="Navigation entre les prompts">',
+      "<h2>Prompts</h2>",
+      "<ol>",
+      prompts.map(function (prompt) {
+        return '<li><a href="#' + prompt.anchor + '" title="' + escapeHtml(prompt.label) + '">' +
+          escapeHtml(prompt.label) + "</a></li>";
+      }).join("\n"),
+      "</ol>",
+      "</nav>"
+    ].join("\n");
+  }
+
   function toHtml(convo, exportTitle) {
     var title = exportTitle || convo.title || "Untitled";
     var messages = getOrderedMessages(convo);
     var created = convo.create_time ? new Date(convo.create_time * 1000).toISOString() : "";
 
-    var body = messages.map(function (m) {
+    var navigation = renderPromptNavigation(messages);
+    var body = messages.map(function (m, index) {
       if (m.role === "system") return "";
 
       var role = normalizeRole(m.role);
@@ -502,12 +762,13 @@
       var msgDate = m.createTime ? formatMessageDate(m.createTime) : "";
 
       return [
-        '<section class="' + cls + '">',
+        '<section class="' + cls + '" id="message-' + (index + 1) + '">',
         '<div class="msg-head">',
         '<h2>' + escapeHtml(role) + '</h2>',
         msgDate ? '<div class="msg-date">' + escapeHtml(msgDate) + '</div>' : "",
         '</div>',
         '<div class="content">',
+        m.hasMap ? renderMapSummary(m.places) : "",
         renderTextAsHtml(m.text),
         '</div>',
         '</section>'
@@ -524,11 +785,17 @@
       "<style>",
       "html { background: #ffffff; color: #111111; }",
       "body { margin: 0; font-family: system-ui, -apple-system, BlinkMacSystemFont, \"Segoe UI\", sans-serif; line-height: 1.62; font-size: 16px; }",
-      "main { max-width: 920px; margin: 0 auto; padding: 32px 22px 80px; }",
+      "main { box-sizing: border-box; max-width: 920px; margin: 0 auto; padding: 32px 22px 80px; }",
+      ".prompt-nav { position: fixed; top: 24px; bottom: 24px; left: 24px; box-sizing: border-box; width: 280px; overflow-y: auto; padding: 16px; border: 1px solid #dddddd; border-radius: 14px; background: #ffffff; }",
+      ".prompt-nav h2 { position: sticky; top: -16px; margin: -16px -16px 10px; padding: 16px; border-bottom: 1px solid #dddddd; background: #ffffff; font-size: 16px; z-index: 1; }",
+      ".prompt-nav ol { margin: 0; padding-left: 24px; }",
+      ".prompt-nav li { margin: 0 0 10px; }",
+      ".prompt-nav a { color: #333333; text-decoration: none; }",
+      ".prompt-nav a:hover, .prompt-nav a:focus { color: #0969da; text-decoration: underline; }",
       "header { border-bottom: 1px solid #dddddd; margin-bottom: 28px; padding-bottom: 18px; }",
       "h1 { font-size: 26px; line-height: 1.25; margin: 0 0 8px; font-weight: 700; }",
       ".meta { color: #666666; font-size: 13px; }",
-      ".msg { margin: 0 0 30px; padding: 18px 18px 16px; border-radius: 14px; border: 1px solid #dddddd; }",
+      ".msg { margin: 0 0 30px; padding: 18px 18px 16px; border-radius: 14px; border: 1px solid #dddddd; scroll-margin-top: 24px; }",
       ".msg h2 { font-size: 14px; text-transform: uppercase; letter-spacing: 0.04em; color: #555555; }",
       ".msg-head { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; margin: 0 0 12px; }",
       ".msg-head h2 { margin: 0; }",
@@ -540,14 +807,23 @@
       ".content a { color: #0969da; text-decoration: underline; text-underline-offset: 2px; }",
       ".content ul, .content ol { margin: 0 0 14px; padding-left: 26px; }",
       ".content li { margin: 4px 0; }",
+      ".map-summary { margin: 0 0 18px; padding: 14px 16px; border: 1px solid #c9d7e8; border-radius: 12px; background: #f4f8fc; }",
+      ".map-summary h3 { margin: 0 0 10px; font-size: 16px; }",
+      ".map-summary ul { margin-bottom: 0; }",
+      ".map-summary li { margin: 8px 0; }",
+      ".place-details, .place-links { display: block; }",
+      ".map-empty { margin: 0; color: #555555; }",
       "pre { margin: 14px 0; padding: 14px 16px; overflow-x: auto; border-radius: 10px; background: #0d1117; color: #c9d1d9; }",
       "pre code { background: transparent; color: inherit; padding: 0; border-radius: 0; }",
       "code { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, \"Liberation Mono\", monospace; font-size: 0.92em; background: #eeeeee; padding: 2px 5px; border-radius: 5px; }",
       ".code-lang { margin: 16px 0 -10px; padding: 5px 10px; display: inline-block; border-radius: 8px 8px 0 0; background: #222222; color: #dddddd; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12px; }",
-      "@media print { body { font-size: 12px; } main { max-width: none; padding: 0; } .msg { break-inside: avoid; } .msg-head { display: block; } .msg-date { margin-top: 4px; } }",
+      "@media (min-width: 1280px) { main { margin-left: max(328px, calc((100vw - 920px) / 2)); margin-right: auto; } }",
+      "@media (max-width: 1279px) { .prompt-nav { position: relative; inset: auto; width: auto; max-height: 260px; margin: 18px 22px 0; } }",
+      "@media print { body { font-size: 12px; } .prompt-nav { display: none; } main { max-width: none; padding: 0; margin: 0; } .msg { break-inside: avoid; } .msg-head { display: block; } .msg-date { margin-top: 4px; } }",
       "</style>",
       "</head>",
       "<body>",
+      navigation,
       "<main>",
       "<header>",
       "<h1>" + escapeHtml(title) + "</h1>",
