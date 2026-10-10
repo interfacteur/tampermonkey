@@ -10,7 +10,10 @@ Les exports Markdown et HTML résolvent les références de contenu fournies par
 
 - les citations web deviennent des liens externes lorsqu’une URL est disponible ;
 - les entités interactives internes, qui ouvrent un volet dans ChatGPT sans URL propre, deviennent des libellés lisibles ;
+- les cartes deviennent des encadrés de lieux avec adresse, coordonnées disponibles et liens OpenStreetMap ;
 - l’export HTML restitue les liens Markdown, le gras, l’italique, les listes, les titres et les blocs de code courants.
+
+L’export HTML ajoute aussi un sommaire des prompts utilisateur. Il reste fixe et défilable sur les écrans suffisamment larges, revient dans le flux sur les écrans plus étroits et n’est pas imprimé.
 
 Si ChatGPT ne fournit aucune destination dans les métadonnées d’une citation, le marqueur technique est retiré plutôt qu’affiché dans l’export.
 
