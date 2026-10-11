@@ -9,6 +9,7 @@ Scripts Tampermonkey liés à l'export des conversations ChatGPT.
 Les exports Markdown et HTML résolvent les références de contenu fournies par ChatGPT :
 
 - les citations web deviennent des liens externes lorsqu’une URL est disponible ;
+- les marqueurs de lien `url` deviennent des liens externes, ou à défaut des libellés lisibles ;
 - les entités interactives internes, qui ouvrent un volet dans ChatGPT sans URL propre, deviennent des libellés lisibles ;
 - les cartes deviennent des encadrés de lieux avec adresse, coordonnées disponibles et liens OpenStreetMap ;
 - l’export HTML restitue les liens Markdown, le gras, l’italique, les listes, les titres et les blocs de code courants.
