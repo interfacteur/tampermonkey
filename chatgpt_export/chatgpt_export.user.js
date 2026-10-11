@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT export current conversation JSON MD HTML
 // @namespace    local
-// @version      1.4.0
+// @version      1.4.1
 // @description  Export current ChatGPT conversation from backend data as JSON, Markdown, and HTML.
 // @match        https://chatgpt.com/*
 // @match        https://chat.openai.com/*
@@ -189,6 +189,62 @@
     return "";
   }
 
+  function urlReferenceDetails(ref, matched) {
+    var marker = String(matched || "");
+    var markerMatch = marker.match(/^\uE200url\uE202([^\uE202\uE201]*)\uE202([^\uE201]*)\uE201$/);
+    var label = markerMatch ? markerMatch[1].trim() : "";
+    var target = markerMatch ? markerMatch[2].trim() : "";
+    var url = validHttpUrl(target);
+
+    if (ref && typeof ref === "object") {
+      if (!label) {
+        label = String(ref.name || ref.title || ref.site_name || ref.domain || "").trim();
+      }
+
+      if (!url) {
+        var alt = String(ref.alt || "");
+        var altLink = alt.match(/\[([^\]\n]+)\]\((https?:\/\/(?:[^()\s]|\([^()\s]*\))+)\)/i);
+
+        if (altLink) {
+          url = validHttpUrl(altLink[2]);
+          if (!label) label = altLink[1].trim();
+        }
+      }
+
+      if (!url) {
+        url = validHttpUrl(ref.url || ref.href || ref.link || ref.download_url);
+      }
+
+      if (!url) {
+        var groups = [ref.items, ref.fallback_items, ref.supporting_websites];
+        groups.some(function (items) {
+          if (!Array.isArray(items)) return false;
+          return items.some(function (item) {
+            if (!item || typeof item !== "object") return false;
+            var candidate = validHttpUrl(item.url || item.href || item.link || item.download_url);
+            if (!candidate) return false;
+            url = candidate;
+            if (!label) {
+              label = String(item.title || item.name || item.site_name || item.domain || "").trim();
+            }
+            return true;
+          });
+        });
+      }
+    }
+
+    return {
+      label: label || url || target,
+      url: url
+    };
+  }
+
+  function urlReferenceReplacement(ref, matched) {
+    var details = urlReferenceDetails(ref, matched);
+    if (!details.label) return "";
+    return details.url ? markdownLink(details.label, details.url) : details.label;
+  }
+
   function fileReferenceReplacement(ref, matched) {
     var label = "";
     var url = "";
@@ -228,13 +284,18 @@
 
     references.forEach(function (ref) {
       var matched = ref && ref.matched_text ? String(ref.matched_text) : "";
-      var isSupportedMarker = /^\uE200(?:cite|entity|filecite)\uE202[^\uE201]*\uE201$/.test(matched);
+      var isSupportedMarker = /^\uE200(?:cite|entity|filecite|url)\uE202[^\uE201]*\uE201$/.test(matched);
 
       if (!isSupportedMarker || text.indexOf(matched) === -1) return;
 
-      var replacement = matched.indexOf("\uE200filecite\uE202") === 0
-        ? fileReferenceReplacement(ref, matched)
-        : referenceReplacement(ref);
+      var replacement;
+      if (matched.indexOf("\uE200filecite\uE202") === 0) {
+        replacement = fileReferenceReplacement(ref, matched);
+      } else if (matched.indexOf("\uE200url\uE202") === 0) {
+        replacement = urlReferenceReplacement(ref, matched);
+      } else {
+        replacement = referenceReplacement(ref);
+      }
       text = text.split(matched).join(replacement);
     });
 
@@ -249,6 +310,7 @@
 
     return text
       .replace(/\uE200message_reaction\uE202([^\uE201]*)\uE201/g, "$1")
+      .replace(/\uE200url\uE202([^\uE202\uE201]*)\uE202[^\uE201]*\uE201/g, "$1")
       .replace(/\uE200cite\uE202[^\uE201]*\uE201/g, "")
       .replace(/\uE200map\uE201/g, "")
       .replace(/\u3010[^\u3011]*\u3011/g, "");
@@ -1040,11 +1102,16 @@
     var matched = String(ref.matched_text || "");
     if (ref.type === "entity" || matched.indexOf("\uE200entity\uE202") === 0) return null;
 
-    var label = String(
+    var urlDetails = matched.indexOf("\uE200url\uE202") === 0
+      ? urlReferenceDetails(ref, matched)
+      : null;
+    var label = urlDetails ? urlDetails.label : String(
       ref.name || ref.title || ref.file_name || ref.filename || ref.site_name || ref.domain ||
       findValueByKeys(ref, ["name", "title", "file_name", "filename", "site_name"], 3) || ""
     ).trim();
-    var url = validHttpUrl(ref.url || ref.href || ref.link || ref.download_url);
+    var url = urlDetails
+      ? urlDetails.url
+      : validHttpUrl(ref.url || ref.href || ref.link || ref.download_url);
 
     if (!url) {
       var groups = [ref.items, ref.fallback_items, ref.supporting_websites];
