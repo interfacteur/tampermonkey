@@ -15,7 +15,17 @@ Les exports Markdown et HTML résolvent les références de contenu fournies par
 
 L’export HTML ajoute aussi un sommaire des prompts utilisateur. Il reste fixe et défilable sur les écrans suffisamment larges, revient dans le flux sur les écrans plus étroits et n’est pas imprimé.
 
-Si ChatGPT ne fournit aucune destination dans les métadonnées d’une citation, le marqueur technique est retiré plutôt qu’affiché dans l’export.
+Les messages techniques sont conservés sans être confondus avec la conversation :
+
+- chaque prompt ouvre un tour qui rassemble la réponse et l’activité technique correspondante ;
+- les rôles d’origine `Assistant` et `Tool` restent visibles et sont complétés par une catégorie (`Appel de recherche`, `Résultat de recherche`, `Lecture de fichier`, `Erreur technique`, etc.) ;
+- les appels d’outils, leurs résultats et les étapes intermédiaires sont repliés par défaut dans des zones consultables ;
+- deux commandes globales permettent de déplier ou masquer toute l’activité technique ;
+- les données brutes sont échappées et affichées telles quelles, sans interprétation Markdown ni exécution de leur éventuel contenu HTML ou JavaScript.
+
+Les pièces jointes restent légères : l’export conserve les métadonnées et un lien d’origine disponible, mais n’incorpore aucun fichier en Base64. Les citations de fichiers sont rendues lisibles lorsque ChatGPT fournit les métadonnées nécessaires ; leur marqueur technique reste présent en solution de repli.
+
+Si ChatGPT ne fournit aucune destination dans les métadonnées d’une citation web, le marqueur technique est retiré plutôt qu’affiché dans l’export.
 
 ## Installation
 

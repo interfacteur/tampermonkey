@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT export current conversation JSON MD HTML
 // @namespace    local
-// @version      1.3.0
+// @version      1.4.0
 // @description  Export current ChatGPT conversation from backend data as JSON, Markdown, and HTML.
 // @match        https://chatgpt.com/*
 // @match        https://chat.openai.com/*
@@ -189,6 +189,37 @@
     return "";
   }
 
+  function fileReferenceReplacement(ref, matched) {
+    var label = "";
+    var url = "";
+
+    if (ref && typeof ref === "object") {
+      label = String(
+        ref.name || ref.title || ref.file_name || ref.filename ||
+        findValueByKeys(ref, ["name", "title", "file_name", "filename"], 3) || ""
+      ).trim();
+      url = validHttpUrl(
+        ref.url || ref.href || ref.download_url ||
+        findValueByKeys(ref, ["url", "href", "download_url"], 3)
+      );
+    }
+
+    var marker = String(matched || "");
+    var targetMatch = marker.match(/\uE200filecite\uE202([^\uE201]+)/);
+    var markerParts = targetMatch ? targetMatch[1].split("\uE202") : [];
+    var target = markerParts[0] || "";
+    var lines = markerParts[1] || "";
+
+    if (!label && target) label = target;
+    if (!label) return marker;
+
+    var suffix = lines
+      ? " (" + lines.replace(/^L/i, "lignes ").replace(/-L?/i, "–") + ")"
+      : "";
+
+    return url ? markdownLink(label + suffix, url) : "[Source : " + label + suffix + "]";
+  }
+
   function resolveContentReferences(str, metadata) {
     var text = String(str || "");
     var references = metadata && Array.isArray(metadata.content_references)
@@ -197,11 +228,14 @@
 
     references.forEach(function (ref) {
       var matched = ref && ref.matched_text ? String(ref.matched_text) : "";
-      var isSupportedMarker = /^\uE200(?:cite|entity)\uE202[^\uE201]*\uE201$/.test(matched);
+      var isSupportedMarker = /^\uE200(?:cite|entity|filecite)\uE202[^\uE201]*\uE201$/.test(matched);
 
       if (!isSupportedMarker || text.indexOf(matched) === -1) return;
 
-      text = text.split(matched).join(referenceReplacement(ref));
+      var replacement = matched.indexOf("\uE200filecite\uE202") === 0
+        ? fileReferenceReplacement(ref, matched)
+        : referenceReplacement(ref);
+      text = text.split(matched).join(replacement);
     });
 
     text = text.replace(/\uE200entity\uE202([^\uE201]*)\uE201/g, function (_, payload) {
@@ -214,6 +248,7 @@
     });
 
     return text
+      .replace(/\uE200message_reaction\uE202([^\uE201]*)\uE201/g, "$1")
       .replace(/\uE200cite\uE202[^\uE201]*\uE201/g, "")
       .replace(/\uE200map\uE201/g, "")
       .replace(/\u3010[^\u3011]*\u3011/g, "");
@@ -450,8 +485,182 @@
     return text;
   }
 
+  function rawPartToText(part) {
+    if (typeof part === "string") return part;
+    if (!part || typeof part !== "object") return "";
+    if (typeof part.text === "string") return part.text;
+
+    try {
+      return JSON.stringify(part, null, 2);
+    } catch (_) {
+      return String(part);
+    }
+  }
+
+  function messageContentToRawText(msg) {
+    if (!msg || !msg.content) return "";
+
+    var content = msg.content;
+    if (Array.isArray(content.parts) && content.parts.length) {
+      return content.parts.map(rawPartToText).filter(Boolean).join("\n");
+    }
+    if (typeof content.text === "string") return content.text;
+
+    try {
+      return JSON.stringify(content, null, 2);
+    } catch (_) {
+      return "";
+    }
+  }
+
   function messageToText(msg) {
     return resolveContentReferences(messageContentToText(msg), msg && msg.metadata).trim();
+  }
+
+  function attachmentFromValue(value) {
+    if (!value || typeof value !== "object") return null;
+
+    var contentType = String(value.content_type || value.type || "").toLowerCase();
+    var assetPointer = value.asset_pointer || value.file_id || value.id || "";
+    var name = value.name || value.file_name || value.filename || value.title || "";
+    var mime = value.mime_type || value.mime || "";
+    var size = Number(value.size_bytes || value.size || 0);
+    var url = validHttpUrl(value.download_url || value.url || value.href);
+    var isAttachment = Boolean(
+      name || mime || url || assetPointer ||
+      contentType.indexOf("asset_pointer") !== -1 ||
+      contentType.indexOf("file") !== -1 ||
+      contentType.indexOf("image") !== -1
+    );
+
+    if (!isAttachment) return null;
+
+    return {
+      name: String(name || (contentType.indexOf("image") !== -1 ? "Image" : "Pièce jointe")),
+      mime: String(mime || ""),
+      size: Number.isFinite(size) && size > 0 ? size : null,
+      id: String(assetPointer || ""),
+      url: url
+    };
+  }
+
+  function extractAttachments(msg) {
+    if (!msg) return [];
+
+    var candidates = [];
+    var contentParts = msg.content && Array.isArray(msg.content.parts) ? msg.content.parts : [];
+    var metadataAttachments = msg.metadata && Array.isArray(msg.metadata.attachments)
+      ? msg.metadata.attachments
+      : [];
+
+    contentParts.concat(metadataAttachments).forEach(function (value) {
+      if (!value || typeof value !== "object") return;
+      var attachment = attachmentFromValue(value);
+      if (attachment) candidates.push(attachment);
+    });
+
+    var merged = Object.create(null);
+    var order = [];
+
+    candidates.forEach(function (attachment) {
+      var normalizedId = attachment.id.replace(/^.*:\/\//, "");
+      var key = normalizedId || attachment.url || [attachment.name, attachment.mime].join("|");
+      if (!merged[key]) {
+        merged[key] = attachment;
+        order.push(key);
+        return;
+      }
+
+      var existing = merged[key];
+      if ((!existing.name || existing.name === "Pièce jointe" || existing.name === "Image") && attachment.name) {
+        existing.name = attachment.name;
+      }
+      if (!existing.mime && attachment.mime) existing.mime = attachment.mime;
+      if (!existing.size && attachment.size) existing.size = attachment.size;
+      if (!existing.url && attachment.url) existing.url = attachment.url;
+    });
+
+    return order.map(function (key) { return merged[key]; });
+  }
+
+  function parseJsonObject(text) {
+    var value = String(text || "").trim();
+    if (!value || value.charAt(0) !== "{") return null;
+
+    try {
+      var parsed = JSON.parse(value);
+      return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : null;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  function technicalDescriptor(message) {
+    var text = String(message.rawText || "").trim();
+    var lower = text.toLowerCase();
+    var parsed = parseJsonObject(text);
+    var path = parsed && typeof parsed.path === "string" ? parsed.path : "";
+    var toolSource = parsed && typeof parsed.api_tool_source === "string"
+      ? parsed.api_tool_source
+      : "";
+    var toolName = path || toolSource || String(message.recipient || "");
+    var normalizedToolName = toolName.toLowerCase()
+      .replace(/[.:]/g, "/")
+      .replace(/^\/+|\/+$/g, "");
+    var isReadTool = /(^|\/)(?:files\/)?read$/.test(normalizedToolName);
+    var isSearchTool = /(^|\/)(?:files\/)?(?:search|find)$/.test(normalizedToolName);
+
+    if (message.role === "tool") {
+      if (/^make sure to include\s+\uE200filecite/i.test(text)) {
+        return { technical: true, category: "Pièce jointe injectée" };
+      }
+      if (/\b(error|traceback|exception|failed)\b/i.test(text)) {
+        return { technical: true, category: "Erreur technique" };
+      }
+      if (isReadTool) {
+        return { technical: true, category: "Lecture de fichier" };
+      }
+      if (isSearchTool) {
+        return { technical: true, category: "Résultat de recherche" };
+      }
+      return { technical: true, category: "Résultat d’outil" };
+    }
+
+    if (message.role !== "assistant") {
+      return { technical: false, category: normalizeRole(message.role) };
+    }
+
+    if (/^(?:bash|sh|zsh|python|python3)\s+-/i.test(text)) {
+      return { technical: true, category: "Commande interne" };
+    }
+    if (parsed && (parsed.path || parsed.args || parsed.query || parsed.command)) {
+      if (isReadTool) {
+        return { technical: true, category: "Appel de lecture" };
+      }
+      if (isSearchTool || parsed.query) {
+        return { technical: true, category: "Appel de recherche" };
+      }
+      return { technical: true, category: "Appel d’outil" };
+    }
+
+    var technicalTypes = [
+      "code", "computer_output", "execution_output", "tool_result",
+      "reasoning", "reasoning_recap", "thoughts", "model_editable_context"
+    ];
+    var metadata = message.metadata || {};
+    var hidden = metadata.is_visually_hidden_from_conversation === true ||
+      metadata.is_hidden === true;
+    var addressedToTool = message.recipient && message.recipient !== "all";
+
+    if (hidden || addressedToTool || technicalTypes.indexOf(String(message.contentType).toLowerCase()) !== -1) {
+      return { technical: true, category: "Étape intermédiaire" };
+    }
+
+    if (lower.indexOf("api tool source") !== -1) {
+      return { technical: true, category: "Appel d’outil" };
+    }
+
+    return { technical: false, category: "Réponse" };
   }
 
   function getOrderedMessages(convo) {
@@ -479,21 +688,29 @@
       if (msg) {
         var role = msg.author && msg.author.role ? msg.author.role : "unknown";
         var contentType = msg.content && msg.content.content_type ? msg.content.content_type : "text";
-        var rawText = messageContentToText(msg);
-        var hasMap = rawText.indexOf("\uE200map\uE201") !== -1;
+        var displayText = messageContentToText(msg);
+        var rawText = messageContentToRawText(msg);
+        var hasMap = displayText.indexOf("\uE200map\uE201") !== -1;
         var text = messageToText(msg);
 
-        if (text || hasMap) {
-          out.push({
+        if (text || rawText || hasMap) {
+          var message = {
             id: id,
             role: role,
             contentType: contentType,
+            recipient: msg.recipient || "",
+            channel: msg.channel || (msg.metadata && msg.metadata.channel) || "",
             createTime: msg.create_time || null,
             updateTime: msg.update_time || null,
+            metadata: msg.metadata || {},
             hasMap: hasMap,
             places: hasMap ? extractPlaces(msg.metadata) : [],
+            attachments: extractAttachments(msg),
+            rawText: rawText.trim(),
             text: text
-          });
+          };
+          message.descriptor = technicalDescriptor(message);
+          out.push(message);
         }
       }
 
@@ -502,6 +719,40 @@
 
     walk(rootId);
     return out;
+  }
+
+  function groupMessagesByTurn(messages) {
+    var turns = [];
+    var current = null;
+    var prelude = [];
+
+    messages.forEach(function (message) {
+      if (message.role === "system") return;
+
+      if (message.role === "user") {
+        current = {
+          index: turns.length + 1,
+          user: message,
+          responses: [],
+          activity: []
+        };
+        turns.push(current);
+        return;
+      }
+
+      if (!current) {
+        prelude.push(message);
+        return;
+      }
+
+      if (message.role === "assistant" && !message.descriptor.technical) {
+        current.responses.push(message);
+      } else {
+        current.activity.push(message);
+      }
+    });
+
+    return { turns: turns, prelude: prelude };
   }
 
   function toMarkdown(convo, exportTitle) {
@@ -722,58 +973,235 @@
     return label || "Prompt sans texte";
   }
 
-  function renderPromptNavigation(messages) {
-    var prompts = [];
-
-    messages.forEach(function (message, index) {
-      if (message.role !== "user") return;
-      prompts.push({
-        anchor: "message-" + (index + 1),
-        label: promptNavigationLabel(message.text)
-      });
-    });
-
-    if (!prompts.length) return "";
+  function renderPromptNavigation(turns) {
+    if (!turns.length) return "";
 
     return [
       '<nav class="prompt-nav" aria-label="Navigation entre les prompts">',
       "<h2>Prompts</h2>",
+      '<div class="activity-controls" aria-label="Affichage de l’activité technique">',
+      '<button type="button" data-activity-action="open">Déplier toute l’activité</button>',
+      '<button type="button" data-activity-action="close">Masquer toute l’activité</button>',
+      "</div>",
       "<ol>",
-      prompts.map(function (prompt) {
-        return '<li><a href="#' + prompt.anchor + '" title="' + escapeHtml(prompt.label) + '">' +
-          escapeHtml(prompt.label) + "</a></li>";
+      turns.map(function (turn) {
+        var label = promptNavigationLabel(turn.user.text);
+        return '<li><a href="#turn-' + turn.index + '" title="' + escapeHtml(label) + '">' +
+          escapeHtml(label) + "</a></li>";
       }).join("\n"),
       "</ol>",
       "</nav>"
     ].join("\n");
   }
 
+  function formatBytes(size) {
+    if (!Number.isFinite(size) || size <= 0) return "";
+    var units = ["o", "Ko", "Mo", "Go"];
+    var value = size;
+    var unit = 0;
+
+    while (value >= 1024 && unit < units.length - 1) {
+      value /= 1024;
+      unit += 1;
+    }
+
+    var precision = value >= 10 || unit === 0 ? 0 : 1;
+    return value.toFixed(precision).replace(".", ",") + " " + units[unit];
+  }
+
+  function renderAttachments(attachments) {
+    if (!attachments || !attachments.length) return "";
+
+    return [
+      '<details class="attachments-details">',
+      "<summary>Pièces jointes — " + attachments.length + "</summary>",
+      "<ul>",
+      attachments.map(function (attachment) {
+        var details = [attachment.mime, formatBytes(attachment.size)].filter(Boolean);
+        var name = escapeHtml(attachment.name || "Pièce jointe");
+        var main = attachment.url
+          ? '<a href="' + escapeHtml(attachment.url) + '" rel="noopener noreferrer" target="_blank" download>' + name + "</a>"
+          : "<strong>" + name + "</strong>";
+        var unavailable = attachment.url ? "" : '<span class="attachment-unavailable">Fichier original non incorporé</span>';
+
+        return "<li>" + main +
+          (details.length ? '<span class="attachment-meta">' + escapeHtml(details.join(" · ")) + "</span>" : "") +
+          (attachment.id ? '<span class="attachment-id">Identifiant : <code>' + escapeHtml(attachment.id) + "</code></span>" : "") +
+          unavailable + "</li>";
+      }).join(""),
+      "</ul>",
+      "</details>"
+    ].join("\n");
+  }
+
+  function sourceSummary(ref) {
+    if (!ref || typeof ref !== "object") return null;
+
+    var matched = String(ref.matched_text || "");
+    if (ref.type === "entity" || matched.indexOf("\uE200entity\uE202") === 0) return null;
+
+    var label = String(
+      ref.name || ref.title || ref.file_name || ref.filename || ref.site_name || ref.domain ||
+      findValueByKeys(ref, ["name", "title", "file_name", "filename", "site_name"], 3) || ""
+    ).trim();
+    var url = validHttpUrl(ref.url || ref.href || ref.link || ref.download_url);
+
+    if (!url) {
+      var groups = [ref.items, ref.fallback_items, ref.supporting_websites];
+      groups.some(function (items) {
+        if (!Array.isArray(items)) return false;
+        return items.some(function (item) {
+          if (!item || typeof item !== "object") return false;
+          var candidate = validHttpUrl(item.url || item.href || item.link);
+          if (!candidate) return false;
+          url = candidate;
+          if (!label) label = String(item.title || item.name || item.site_name || item.domain || "").trim();
+          return true;
+        });
+      });
+    }
+
+    if (!label && matched.indexOf("\uE200filecite\uE202") === 0) {
+      var marker = matched.match(/\uE200filecite\uE202([^\uE202\uE201]+)/);
+      if (marker) label = marker[1];
+    }
+
+    if (!label && url) label = url;
+    if (!label && !matched) return null;
+
+    return {
+      label: label || "Référence technique",
+      url: url,
+      marker: matched,
+      type: String(ref.type || "référence")
+    };
+  }
+
+  function renderSources(message) {
+    var refs = message.metadata && Array.isArray(message.metadata.content_references)
+      ? message.metadata.content_references
+      : [];
+    var seen = Object.create(null);
+    var sources = refs.map(sourceSummary).filter(function (source) {
+      if (!source) return false;
+      var key = [source.label, source.url, source.marker].join("|");
+      if (seen[key]) return false;
+      seen[key] = true;
+      return true;
+    });
+
+    if (!sources.length) return "";
+
+    return [
+      '<details class="sources-details">',
+      "<summary>Sources et références — " + sources.length + "</summary>",
+      "<ul>",
+      sources.map(function (source) {
+        var label = source.url
+          ? '<a href="' + escapeHtml(source.url) + '" rel="noopener noreferrer" target="_blank">' + escapeHtml(source.label) + "</a>"
+          : "<strong>" + escapeHtml(source.label) + "</strong>";
+        return "<li>" + label +
+          '<span class="source-type">' + escapeHtml(source.type) + "</span>" +
+          (source.marker ? '<code class="source-marker">' + escapeHtml(source.marker) + "</code>" : "") +
+          "</li>";
+      }).join(""),
+      "</ul>",
+      "</details>"
+    ].join("\n");
+  }
+
+  function renderConversationMessage(message, id, extraClass) {
+    var role = normalizeRole(message.role);
+    var category = message.role === "assistant" ? " — " + message.descriptor.category : "";
+    var msgDate = message.createTime ? formatMessageDate(message.createTime) : "";
+
+    return [
+      '<section class="msg ' + escapeHtml(extraClass || message.role) + '"' + (id ? ' id="' + escapeHtml(id) + '"' : "") + ">",
+      '<div class="msg-head">',
+      "<h2>" + escapeHtml(role + category) + "</h2>",
+      msgDate ? '<div class="msg-date">' + escapeHtml(msgDate) + "</div>" : "",
+      "</div>",
+      '<div class="content">',
+      message.hasMap ? renderMapSummary(message.places) : "",
+      renderTextAsHtml(message.text),
+      "</div>",
+      message.role === "assistant" ? renderSources(message) : "",
+      "</section>"
+    ].join("\n");
+  }
+
+  function renderTechnicalEvent(message) {
+    var role = normalizeRole(message.role);
+    var category = message.descriptor.category;
+    var msgDate = message.createTime ? formatMessageDate(message.createTime) : "";
+    var raw = message.rawText || message.text || "(aucun contenu textuel)";
+    var metadata = [
+      message.contentType ? "type : " + message.contentType : "",
+      message.recipient ? "destinataire : " + message.recipient : "",
+      message.channel ? "canal : " + message.channel : "",
+      message.id ? "id : " + message.id : ""
+    ].filter(Boolean);
+
+    return [
+      '<details class="tech-event">',
+      "<summary><strong>" + escapeHtml(role) + "</strong> — " + escapeHtml(category) +
+        (msgDate ? '<time>' + escapeHtml(msgDate) + "</time>" : "") + "</summary>",
+      metadata.length ? '<div class="tech-meta">' + metadata.map(escapeHtml).join(" · ") + "</div>" : "",
+      '<pre><code>' + escapeHtml(raw) + "</code></pre>",
+      "</details>"
+    ].join("\n");
+  }
+
+  function activitySummary(messages) {
+    var counts = Object.create(null);
+    messages.forEach(function (message) {
+      var category = message.descriptor.category;
+      counts[category] = (counts[category] || 0) + 1;
+    });
+
+    var detail = Object.keys(counts).map(function (category) {
+      return counts[category] + " " + category.toLowerCase();
+    }).join(", ");
+
+    return "Activité technique — " + messages.length + " élément" + (messages.length > 1 ? "s" : "") +
+      (detail ? " (" + detail + ")" : "");
+  }
+
+  function renderActivity(messages, className) {
+    if (!messages.length) return "";
+
+    return [
+      '<details class="activity-details ' + escapeHtml(className || "") + '">',
+      "<summary>" + escapeHtml(activitySummary(messages)) + "</summary>",
+      '<div class="activity-events">',
+      messages.map(renderTechnicalEvent).join("\n"),
+      "</div>",
+      "</details>"
+    ].join("\n");
+  }
+
+  function renderTurn(turn) {
+    return [
+      '<article class="turn" id="turn-' + turn.index + '">',
+      renderConversationMessage(turn.user, "", "user"),
+      renderAttachments(turn.user.attachments),
+      renderActivity(turn.activity),
+      turn.responses.map(function (message) {
+        return renderConversationMessage(message, "", "assistant final-response");
+      }).join("\n"),
+      "</article>"
+    ].join("\n");
+  }
+
   function toHtml(convo, exportTitle) {
     var title = exportTitle || convo.title || "Untitled";
     var messages = getOrderedMessages(convo);
+    var grouped = groupMessagesByTurn(messages);
     var created = convo.create_time ? new Date(convo.create_time * 1000).toISOString() : "";
 
-    var navigation = renderPromptNavigation(messages);
-    var body = messages.map(function (m, index) {
-      if (m.role === "system") return "";
-
-      var role = normalizeRole(m.role);
-      var cls = m.role === "user" ? "msg user" : "msg assistant";
-      var msgDate = m.createTime ? formatMessageDate(m.createTime) : "";
-
-      return [
-        '<section class="' + cls + '" id="message-' + (index + 1) + '">',
-        '<div class="msg-head">',
-        '<h2>' + escapeHtml(role) + '</h2>',
-        msgDate ? '<div class="msg-date">' + escapeHtml(msgDate) + '</div>' : "",
-        '</div>',
-        '<div class="content">',
-        m.hasMap ? renderMapSummary(m.places) : "",
-        renderTextAsHtml(m.text),
-        '</div>',
-        '</section>'
-      ].join("\n");
-    }).join("\n");
+    var navigation = renderPromptNavigation(grouped.turns);
+    var body = (grouped.prelude.length ? renderActivity(grouped.prelude, "prelude-details") : "") +
+      grouped.turns.map(renderTurn).join("\n");
 
     return [
       "<!doctype html>",
@@ -788,6 +1216,9 @@
       "main { box-sizing: border-box; max-width: 920px; margin: 0 auto; padding: 32px 22px 80px; }",
       ".prompt-nav { position: fixed; top: 24px; bottom: 24px; left: 24px; box-sizing: border-box; width: 280px; overflow-y: auto; padding: 16px; border: 1px solid #dddddd; border-radius: 14px; background: #ffffff; }",
       ".prompt-nav h2 { position: sticky; top: -16px; margin: -16px -16px 10px; padding: 16px; border-bottom: 1px solid #dddddd; background: #ffffff; font-size: 16px; z-index: 1; }",
+      ".activity-controls { display: grid; gap: 7px; margin: 0 0 14px; }",
+      ".activity-controls button { padding: 7px 9px; border: 1px solid #cccccc; border-radius: 8px; background: #f7f7f7; color: #222222; cursor: pointer; text-align: left; }",
+      ".activity-controls button:hover, .activity-controls button:focus { border-color: #0969da; color: #0969da; }",
       ".prompt-nav ol { margin: 0; padding-left: 24px; }",
       ".prompt-nav li { margin: 0 0 10px; }",
       ".prompt-nav a { color: #333333; text-decoration: none; }",
@@ -795,13 +1226,15 @@
       "header { border-bottom: 1px solid #dddddd; margin-bottom: 28px; padding-bottom: 18px; }",
       "h1 { font-size: 26px; line-height: 1.25; margin: 0 0 8px; font-weight: 700; }",
       ".meta { color: #666666; font-size: 13px; }",
-      ".msg { margin: 0 0 30px; padding: 18px 18px 16px; border-radius: 14px; border: 1px solid #dddddd; scroll-margin-top: 24px; }",
+      ".turn { margin: 0 0 34px; scroll-margin-top: 24px; }",
+      ".msg { margin: 0 0 12px; padding: 18px 18px 16px; border-radius: 14px; border: 1px solid #dddddd; }",
       ".msg h2 { font-size: 14px; text-transform: uppercase; letter-spacing: 0.04em; color: #555555; }",
       ".msg-head { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; margin: 0 0 12px; }",
       ".msg-head h2 { margin: 0; }",
       ".msg-date { color: #666666; font-size: 12px; white-space: nowrap; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, \"Liberation Mono\", monospace; }",
       ".msg.user { background: #f7f7f7; }",
       ".msg.assistant { background: #ffffff; }",
+      ".msg.final-response { margin-top: 12px; }",
       ".content p { margin: 0 0 14px; }",
       ".content p:last-child { margin-bottom: 0; }",
       ".content a { color: #0969da; text-decoration: underline; text-underline-offset: 2px; }",
@@ -813,13 +1246,26 @@
       ".map-summary li { margin: 8px 0; }",
       ".place-details, .place-links { display: block; }",
       ".map-empty { margin: 0; color: #555555; }",
+      ".activity-details, .attachments-details, .sources-details { margin: 10px 0 12px; border: 1px solid #d8d8d8; border-radius: 10px; background: #fafafa; }",
+      ".activity-details > summary, .attachments-details > summary, .sources-details > summary { padding: 10px 12px; cursor: pointer; font-weight: 600; color: #444444; }",
+      ".activity-events { padding: 0 10px 10px; }",
+      ".tech-event { margin: 8px 0; border: 1px solid #dddddd; border-radius: 8px; background: #ffffff; }",
+      ".tech-event > summary { padding: 8px 10px; cursor: pointer; }",
+      ".tech-event time { float: right; margin-left: 12px; color: #666666; font-size: 12px; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }",
+      ".tech-meta { padding: 8px 12px 0; color: #666666; font-size: 12px; overflow-wrap: anywhere; }",
+      ".tech-event pre { margin: 10px 12px 12px; white-space: pre-wrap; overflow-wrap: anywhere; }",
+      ".attachments-details ul, .sources-details ul { margin: 0; padding: 0 16px 12px 34px; }",
+      ".attachments-details li, .sources-details li { margin: 8px 0; }",
+      ".attachment-meta, .attachment-id, .attachment-unavailable, .source-type, .source-marker { display: block; margin-top: 3px; color: #666666; font-size: 12px; overflow-wrap: anywhere; }",
+      ".attachment-unavailable { color: #8a4b08; }",
+      ".source-marker { white-space: normal; }",
       "pre { margin: 14px 0; padding: 14px 16px; overflow-x: auto; border-radius: 10px; background: #0d1117; color: #c9d1d9; }",
       "pre code { background: transparent; color: inherit; padding: 0; border-radius: 0; }",
       "code { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, \"Liberation Mono\", monospace; font-size: 0.92em; background: #eeeeee; padding: 2px 5px; border-radius: 5px; }",
       ".code-lang { margin: 16px 0 -10px; padding: 5px 10px; display: inline-block; border-radius: 8px 8px 0 0; background: #222222; color: #dddddd; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12px; }",
       "@media (min-width: 1280px) { main { margin-left: max(328px, calc((100vw - 920px) / 2)); margin-right: auto; } }",
       "@media (max-width: 1279px) { .prompt-nav { position: relative; inset: auto; width: auto; max-height: 260px; margin: 18px 22px 0; } }",
-      "@media print { body { font-size: 12px; } .prompt-nav { display: none; } main { max-width: none; padding: 0; margin: 0; } .msg { break-inside: avoid; } .msg-head { display: block; } .msg-date { margin-top: 4px; } }",
+      "@media print { body { font-size: 12px; } .prompt-nav { display: none; } main { max-width: none; padding: 0; margin: 0; } .msg { break-inside: avoid; } .msg-head { display: block; } .msg-date { margin-top: 4px; } .activity-details, .attachments-details, .sources-details { break-inside: avoid; } }",
       "</style>",
       "</head>",
       "<body>",
@@ -831,6 +1277,14 @@
       "</header>",
       body,
       "</main>",
+      "<script>",
+      "document.addEventListener('click', function (event) {",
+      "  var button = event.target.closest('[data-activity-action]');",
+      "  if (!button) return;",
+      "  var open = button.getAttribute('data-activity-action') === 'open';",
+      "  document.querySelectorAll('details.activity-details, details.activity-details details.tech-event').forEach(function (details) { details.open = open; });",
+      "});",
+      "</script>",
       "</body>",
       "</html>"
     ].join("\n");
