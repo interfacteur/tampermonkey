@@ -12,7 +12,8 @@ Les exports Markdown et HTML résolvent les références de contenu fournies par
 - les marqueurs de lien `url` deviennent des liens externes, ou à défaut des libellés lisibles ;
 - les entités interactives internes, qui ouvrent un volet dans ChatGPT sans URL propre, deviennent des libellés lisibles ;
 - les cartes deviennent des encadrés de lieux avec adresse, coordonnées disponibles et liens OpenStreetMap ;
-- l’export HTML restitue les liens Markdown, le gras, l’italique, les listes, les titres et les blocs de code courants.
+- l’export HTML restitue les liens Markdown, le gras, l’italique, les listes imbriquées, les tableaux, les citations, les séparateurs, les titres et les blocs de code courants ;
+- les composants de réponse connus (`Cite`, `FileCite`, `Entity`, `Link`, conteneurs de mise en page et demandes d’illustration) sont convertis en contenu statique sûr plutôt qu’affichés comme du code brut.
 
 L’export HTML ajoute aussi un sommaire des prompts utilisateur. Il reste fixe et défilable sur les écrans suffisamment larges, revient dans le flux sur les écrans plus étroits et n’est pas imprimé.
 

@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT export current conversation JSON MD HTML
 // @namespace    local
-// @version      1.4.1
+// @version      1.5.0
 // @description  Export current ChatGPT conversation from backend data as JSON, Markdown, and HTML.
 // @match        https://chatgpt.com/*
 // @match        https://chat.openai.com/*
@@ -547,6 +547,133 @@
     return text;
   }
 
+  function componentAttribute(attrs, name) {
+    var source = String(attrs || "");
+    var escapedName = String(name || "").replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    var quoted = source.match(new RegExp("(?:^|\\s)" + escapedName + "\\s*=\\s*([\\\"'])([\\s\\S]*?)\\1", "i"));
+    if (quoted) return quoted[2];
+
+    var expression = source.match(new RegExp("(?:^|\\s)" + escapedName + "\\s*=\\s*\\{([\\s\\S]*?)\\}(?=\\s|$)", "i"));
+    return expression ? expression[1] : "";
+  }
+
+  function componentTargets(attrs) {
+    var source = componentAttribute(attrs, "refs") || componentAttribute(attrs, "ref");
+    var targets = [];
+    var match;
+    var pattern = /turn[0-9A-Za-z_-]+(?:search|view|news|reddit|file)[0-9A-Za-z_-]*/g;
+
+    while ((match = pattern.exec(source)) !== null) {
+      if (targets.indexOf(match[0]) === -1) targets.push(match[0]);
+    }
+
+    return targets;
+  }
+
+  function valueContainsTarget(value, target, depth, seen) {
+    if (depth > 5 || value == null) return false;
+    if (typeof value === "string") return value.indexOf(target) !== -1;
+    if (typeof value !== "object") return false;
+    if (seen.indexOf(value) !== -1) return false;
+    seen.push(value);
+
+    if (Array.isArray(value)) {
+      return value.some(function (item) {
+        return valueContainsTarget(item, target, depth + 1, seen);
+      });
+    }
+
+    return Object.keys(value).some(function (key) {
+      return valueContainsTarget(value[key], target, depth + 1, seen);
+    });
+  }
+
+  function linksForComponentTargets(metadata, targets) {
+    var references = metadata && Array.isArray(metadata.content_references)
+      ? metadata.content_references
+      : [];
+    var links = [];
+
+    references.forEach(function (ref) {
+      if (!targets.some(function (target) {
+        return valueContainsTarget(ref, target, 0, []);
+      })) return;
+
+      var replacement = referenceReplacement(ref);
+      if (replacement && links.indexOf(replacement) === -1) links.push(replacement);
+    });
+
+    return links;
+  }
+
+  function fileComponentReplacement(attrs, metadata) {
+    var targets = componentTargets(attrs);
+    var target = targets[0] || componentAttribute(attrs, "ref");
+    var start = componentAttribute(attrs, "line_range_start");
+    var end = componentAttribute(attrs, "line_range_end");
+    var references = metadata && Array.isArray(metadata.content_references)
+      ? metadata.content_references
+      : [];
+    var ref = references.find(function (candidate) {
+      return target && valueContainsTarget(candidate, target, 0, []);
+    });
+    var lines = start ? "L" + start + (end ? "-L" + end : "") : "";
+    var marker = "\uE200filecite\uE202" + target + (lines ? "\uE202" + lines : "") + "\uE201";
+
+    return fileReferenceReplacement(ref, marker);
+  }
+
+  function normalizeComponentMarkup(str, metadata) {
+    var text = String(str || "");
+    var protectedCode = [];
+
+    function protect(value) {
+      var index = protectedCode.length;
+      protectedCode.push(value);
+      return "\uE110" + index + "\uE111";
+    }
+
+    text = text.replace(/```[\s\S]*?```/g, protect);
+    text = text.replace(/`[^`\n]*`/g, protect);
+
+    text = text.replace(/<Cite\b([\s\S]*?)\/>/gi, function (_, attrs) {
+      return linksForComponentTargets(metadata, componentTargets(attrs)).join(", ");
+    });
+
+    text = text.replace(/<FileCite\b([\s\S]*?)\/>/gi, function (_, attrs) {
+      return fileComponentReplacement(attrs, metadata);
+    });
+
+    text = text.replace(/<Entity\b([\s\S]*?)\/>/gi, function (_, attrs) {
+      return componentAttribute(attrs, "value") || componentAttribute(attrs, "name") || "";
+    });
+
+    text = text.replace(/<Link\b([\s\S]*?)\/>/gi, function (_, attrs) {
+      var url = validHttpUrl(componentAttribute(attrs, "url") || componentAttribute(attrs, "href"));
+      var label = componentAttribute(attrs, "title") || componentAttribute(attrs, "label") || url;
+      return url ? markdownLink(label, url) : label;
+    });
+
+    text = text.replace(/<AsyncImage\b([\s\S]*?)\/>/gi, function (_, attrs) {
+      var query = componentAttribute(attrs, "query");
+      return query ? "\n\n*Illustration : " + query + "*\n\n" : "";
+    });
+
+    text = text.replace(/<MessageReaction\b([\s\S]*?)\/>/gi, function (_, attrs) {
+      return componentAttribute(attrs, "emoji");
+    });
+
+    text = text.replace(/<divider\b[\s\S]*?\/>/gi, "\n\n---\n\n");
+    text = text.replace(/<caption\b[^>]*>/gi, "\n\n*");
+    text = text.replace(/<\/caption>/gi, "*\n\n");
+    text = text.replace(/<\/?(?:box|row|grid|grid-item|text)\b[^>]*>/gi, "\n");
+
+    text = text.replace(/\n[ \t]+\n/g, "\n\n").replace(/\n{3,}/g, "\n\n").trim();
+    return text.replace(/\uE110([0-9]+)\uE111/g, function (_, index) {
+      return protectedCode[Number(index)] || "";
+    });
+  }
+
   function rawPartToText(part) {
     if (typeof part === "string") return part;
     if (!part || typeof part !== "object") return "";
@@ -576,7 +703,11 @@
   }
 
   function messageToText(msg) {
-    return resolveContentReferences(messageContentToText(msg), msg && msg.metadata).trim();
+    var metadata = msg && msg.metadata;
+    var role = msg && msg.author && msg.author.role;
+    var text = messageContentToText(msg);
+    if (role === "assistant") text = normalizeComponentMarkup(text, metadata);
+    return resolveContentReferences(text, metadata).trim();
   }
 
   function attachmentFromValue(value) {
@@ -894,6 +1025,8 @@
       );
     });
 
+    raw = raw.replace(/\\([\\`*{}\[\]()#+\-.!_>|=])/g, "$1");
+
     var safe = escapeHtml(raw)
       .replace(/\*\*([^*\n]+)\*\*/g, "<strong>$1</strong>")
       .replace(/__([^_\n]+)__/g, "<strong>$1</strong>")
@@ -920,8 +1053,87 @@
 
     var html = [];
     var paragraph = [];
-    var listItems = [];
-    var listType = null;
+    var listStack = [];
+
+    function indentation(value) {
+      return String(value || "").replace(/\t/g, "    ").length;
+    }
+
+    function parseListLine(line) {
+      var match = line.match(/^([ \t]*)([-+*]|([0-9]+)[.)])\s+(.+)$/);
+      if (!match) return null;
+      return {
+        indent: indentation(match[1]),
+        type: match[3] ? "ol" : "ul",
+        start: match[3] ? Number(match[3]) : null,
+        content: match[4]
+      };
+    }
+
+    function splitTableRow(line) {
+      var value = String(line || "").trim();
+      if (value.charAt(0) === "|") value = value.slice(1);
+      if (value.charAt(value.length - 1) === "|") value = value.slice(0, -1);
+
+      var cells = [];
+      var cell = "";
+      var escaped = false;
+
+      for (var i = 0; i < value.length; i += 1) {
+        var char = value.charAt(i);
+        if (escaped) {
+          cell += char;
+          escaped = false;
+        } else if (char === "\\") {
+          escaped = true;
+        } else if (char === "|") {
+          cells.push(cell.trim());
+          cell = "";
+        } else {
+          cell += char;
+        }
+      }
+
+      if (escaped) cell += "\\";
+      cells.push(cell.trim());
+      return cells;
+    }
+
+    function isTableDivider(line) {
+      var cells = splitTableRow(line);
+      return cells.length > 0 && cells.every(function (cell) {
+        return /^:?-{3,}:?$/.test(cell);
+      });
+    }
+
+    function renderTable(lines) {
+      var header = splitTableRow(lines[0]);
+      var alignments = splitTableRow(lines[1]).map(function (cell) {
+        if (/^:-+:$/.test(cell)) return "center";
+        if (/^-+:$/.test(cell)) return "right";
+        if (/^:-+$/.test(cell)) return "left";
+        return "";
+      });
+      var rows = lines.slice(2).map(splitTableRow);
+
+      function renderCell(tag, value, index) {
+        var style = alignments[index] ? ' style="text-align:' + alignments[index] + '"' : "";
+        return "<" + tag + style + ">" + renderInlineMarkdown(value || "") + "</" + tag + ">";
+      }
+
+      return [
+        "<div class=\"table-wrap\"><table>",
+        "<thead><tr>" + header.map(function (cell, index) {
+          return renderCell("th", cell, index);
+        }).join("") + "</tr></thead>",
+        "<tbody>" + rows.map(function (row) {
+          return "<tr>" + header.map(function (_, index) {
+            return renderCell("td", row[index] || "", index);
+          }).join("") + "</tr>";
+        }).join("") + "</tbody>",
+        "</table></div>"
+      ].join("");
+    }
 
     function flushParagraph() {
       if (!paragraph.length) return;
@@ -929,65 +1141,149 @@
       paragraph = [];
     }
 
-    function flushList() {
-      if (!listItems.length) return;
-      html.push(
-        "<" + listType + ">" +
-        listItems.map(function (item) {
-          return "<li>" + renderInlineMarkdown(item) + "</li>";
-        }).join("") +
-        "</" + listType + ">"
-      );
-      listItems = [];
-      listType = null;
+    function closeListLevel() {
+      var level = listStack[listStack.length - 1];
+      if (!level) return;
+      if (level.itemOpen) html.push("</li>");
+      html.push("</" + level.type + ">");
+      listStack.pop();
     }
 
-    raw.split("\n").forEach(function (line) {
+    function closeLists() {
+      while (listStack.length) closeListLevel();
+    }
+
+    function openList(item) {
+      var start = item.type === "ol" && item.start !== 1 ? ' start="' + item.start + '"' : "";
+      html.push("<" + item.type + start + ">");
+      listStack.push({
+        indent: item.indent,
+        type: item.type,
+        itemOpen: false
+      });
+    }
+
+    function appendListItem(item) {
+      var level = listStack[listStack.length - 1];
+
+      while (level && item.indent < level.indent) {
+        closeListLevel();
+        level = listStack[listStack.length - 1];
+      }
+
+      if (!level || item.indent > level.indent) {
+        openList(item);
+        level = listStack[listStack.length - 1];
+      } else if (level.type !== item.type) {
+        closeListLevel();
+        openList(item);
+        level = listStack[listStack.length - 1];
+      } else if (level.itemOpen) {
+        html.push("</li>");
+        level.itemOpen = false;
+      }
+
+      html.push("<li>" + renderInlineMarkdown(item.content));
+      level.itemOpen = true;
+    }
+
+    var lines = raw.split("\n");
+
+    for (var lineIndex = 0; lineIndex < lines.length; lineIndex += 1) {
+      var line = lines[lineIndex];
       var codeMatch = line.trim().match(/^@@CODE_BLOCK_([0-9]+)@@$/);
-      var unordered = line.match(/^\s*[-+*]\s+(.+)$/);
-      var ordered = line.match(/^\s*[0-9]+[.)]\s+(.+)$/);
+      var listItem = parseListLine(line);
       var heading = line.match(/^\s*(#{1,6})\s+(.+)$/);
+      var quote = line.match(/^\s*>\s?(.*)$/);
+      var horizontalRule = /^\s*(?:-{3,}|\*{3,}|_{3,})\s*$/.test(line);
+      var tableStart = line.indexOf("|") !== -1 && lineIndex + 1 < lines.length && isTableDivider(lines[lineIndex + 1]);
 
       if (codeMatch) {
         flushParagraph();
-        flushList();
+        closeLists();
         var block = codeBlocks[Number(codeMatch[1])];
         var label = block.lang
           ? '<div class="code-lang">' + escapeHtml(block.lang) + '</div>'
           : "";
         html.push(label + '<pre><code>' + escapeHtml(block.code) + '</code></pre>');
-        return;
+        continue;
       }
 
-      if (unordered || ordered) {
+      if (tableStart) {
         flushParagraph();
-        var nextType = unordered ? "ul" : "ol";
-        if (listType && listType !== nextType) flushList();
-        listType = nextType;
-        listItems.push((unordered || ordered)[1]);
-        return;
+        closeLists();
+        var tableLines = [line, lines[lineIndex + 1]];
+        lineIndex += 2;
+        while (lineIndex < lines.length && lines[lineIndex].indexOf("|") !== -1 && lines[lineIndex].trim()) {
+          tableLines.push(lines[lineIndex]);
+          lineIndex += 1;
+        }
+        lineIndex -= 1;
+        html.push(renderTable(tableLines));
+        continue;
+      }
+
+      if (listItem) {
+        flushParagraph();
+        appendListItem(listItem);
+        continue;
       }
 
       if (heading) {
         flushParagraph();
-        flushList();
+        closeLists();
         var level = heading[1].length;
         html.push("<h" + level + ">" + renderInlineMarkdown(heading[2]) + "</h" + level + ">");
-        return;
+        continue;
+      }
+
+      if (horizontalRule) {
+        flushParagraph();
+        closeLists();
+        html.push("<hr>");
+        continue;
+      }
+
+      if (quote) {
+        flushParagraph();
+        closeLists();
+        var quoteLines = [quote[1]];
+        while (lineIndex + 1 < lines.length) {
+          var nextQuote = lines[lineIndex + 1].match(/^\s*>\s?(.*)$/);
+          if (!nextQuote) break;
+          quoteLines.push(nextQuote[1]);
+          lineIndex += 1;
+        }
+        html.push("<blockquote><p>" + quoteLines.map(renderInlineMarkdown).join("<br>") + "</p></blockquote>");
+        continue;
       }
 
       if (!line.trim()) {
         flushParagraph();
-        flushList();
-        return;
+        if (listStack.length) {
+          var lookahead = lineIndex + 1;
+          while (lookahead < lines.length && !lines[lookahead].trim()) lookahead += 1;
+          var followingItem = lookahead < lines.length ? parseListLine(lines[lookahead]) : null;
+          if (!followingItem || followingItem.indent < listStack[0].indent) closeLists();
+        }
+        continue;
       }
 
-      flushList();
+      if (listStack.length) {
+        var activeLevel = listStack[listStack.length - 1];
+        var leading = (line.match(/^([ \t]*)/) || ["", ""])[1];
+        if (indentation(leading) > activeLevel.indent && activeLevel.itemOpen) {
+          html.push("<br>" + renderInlineMarkdown(line.trim()));
+          continue;
+        }
+        closeLists();
+      }
+
       paragraph.push(line);
-    });
+    }
 
     flushParagraph();
-    flushList();
+    closeLists();
 
     return html.join("\n");
   }
@@ -1307,6 +1603,14 @@
       ".content a { color: #0969da; text-decoration: underline; text-underline-offset: 2px; }",
       ".content ul, .content ol { margin: 0 0 14px; padding-left: 26px; }",
       ".content li { margin: 4px 0; }",
+      ".content li > ul, .content li > ol { margin: 4px 0; }",
+      ".content blockquote { margin: 14px 0; padding: 2px 0 2px 16px; border-left: 4px solid #c8c8c8; color: #444444; }",
+      ".content blockquote p { margin: 0; }",
+      ".content hr { margin: 22px 0; border: 0; border-top: 1px solid #dddddd; }",
+      ".table-wrap { margin: 14px 0; overflow-x: auto; }",
+      ".content table { width: 100%; border-collapse: collapse; font-size: 0.95em; }",
+      ".content th, .content td { padding: 8px 10px; border: 1px solid #d8d8d8; vertical-align: top; text-align: left; }",
+      ".content th { background: #f3f3f3; font-weight: 650; }",
       ".map-summary { margin: 0 0 18px; padding: 14px 16px; border: 1px solid #c9d7e8; border-radius: 12px; background: #f4f8fc; }",
       ".map-summary h3 { margin: 0 0 10px; font-size: 16px; }",
       ".map-summary ul { margin-bottom: 0; }",
@@ -1332,7 +1636,7 @@
       ".code-lang { margin: 16px 0 -10px; padding: 5px 10px; display: inline-block; border-radius: 8px 8px 0 0; background: #222222; color: #dddddd; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12px; }",
       "@media (min-width: 1280px) { main { margin-left: max(328px, calc((100vw - 920px) / 2)); margin-right: auto; } }",
       "@media (max-width: 1279px) { .prompt-nav { position: relative; inset: auto; width: auto; max-height: 260px; margin: 18px 22px 0; } }",
-      "@media print { body { font-size: 12px; } .prompt-nav { display: none; } main { max-width: none; padding: 0; margin: 0; } .msg { break-inside: avoid; } .msg-head { display: block; } .msg-date { margin-top: 4px; } .activity-details, .attachments-details, .sources-details { break-inside: avoid; } }",
+      "@media print { body { font-size: 12px; } .prompt-nav { display: none; } main { max-width: none; padding: 0; margin: 0; } .msg { break-inside: avoid; } .msg-head { display: block; } .msg-date { margin-top: 4px; } .activity-details, .attachments-details, .sources-details, .table-wrap { break-inside: avoid; } }",
       "</style>",
       "</head>",
       "<body>",
