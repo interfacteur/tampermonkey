@@ -27,7 +27,8 @@ Sur une page de conversation déjà horodatée :
 Sur une page de conversation non horodatée :
 
 - attente d’une URL de conversation de forme `/c/<id>` ;
-- attente d’un titre stabilisé différent de `ChatGPT` ;
+- rejet des titres provisoires tels que `ChatGPT`, `New Chat` ou `Nouveau chat` ;
+- attente de trois lectures backend identiques d’un titre non provisoire ;
 - recherche temporaire d’un élément `.chatgpt-timestamp` ;
 - extraction de la date historique ;
 - appel ponctuel aux endpoints internes nécessaires ;
@@ -76,7 +77,11 @@ Le script doit donc rester prudent :
 
 - pas de boucle réseau permanente ;
 - pas de renommage répété ;
-- pas de `PATCH` tant que le titre et une date backend ou DOM ne sont pas disponibles ;
+- pas de `PATCH` tant que le titre n’est pas non provisoire et stable, et qu’une date backend ou DOM n’est pas disponible ;
+- nouvelle lecture juste avant le `PATCH`, avec abandon et nouvelle tentative si le titre a changé entre-temps ;
+- conservation intégrale du titre courant, qu’il soit généré par ChatGPT ou personnalisé, à l’exception du suffixe daté géré par le script ;
+- reprise prudente de la stabilisation lorsqu’un titre est personnalisé après une première datation ;
+- nombre de nouvelles tentatives limité afin d’éviter toute boucle réseau permanente ;
 - pas de bannière lorsque la date est absente ;
 - arrêt du moniteur temporaire après expiration.
 

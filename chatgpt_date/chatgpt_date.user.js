@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         ChatGPT Fixed Title Banner Auto Date
 // @namespace    local
-// @version      1.8.2
-// @description  Fixed banner with dated chat title. One-shot server rename after stable title and timestamp.
+// @version      1.9.0
+// @description  Fixed banner with dated chat title. Conservative server rename after title stabilization.
 // @downloadURL  https://raw.githubusercontent.com/interfacteur/tampermonkey/main/chatgpt_date/chatgpt_date.user.js
 // @updateURL    https://raw.githubusercontent.com/interfacteur/tampermonkey/main/chatgpt_date/chatgpt_date.user.js
 // @match        https://chatgpt.com/*
@@ -21,6 +21,11 @@
   var MAX_TIMESTAMP_TICKS = 30;
   var TIMESTAMP_INTERVAL_MS = 1000;
   var URL_POLL_MS = 1000;
+  var TITLE_STABILITY_INTERVAL_MS = 2000;
+  var TITLE_STABILITY_READS = 3;
+  var MAX_TITLE_STABILITY_READS = 15;
+  var RENAME_RETRY_MS = 3000;
+  var MAX_RENAME_RETRIES = 3;
 
   var timestampHandle = null;
   var timestampConversationId = null;
@@ -36,6 +41,8 @@
   var bannerVisible = false;
 
   var renameState = Object.create(null);
+  var renameRetryHandle = Object.create(null);
+  var renameRetryCount = Object.create(null);
   var backendDateAttempted = Object.create(null);
   var datedTitle = Object.create(null);
   var renamedDisplayTitle = Object.create(null);
@@ -90,9 +97,23 @@
     return t;
   }
 
-  function isNeutralTitle(title) {
+  function isProvisionalTitle(title) {
     var t = cleanDocumentTitle(title);
-    return !t || t === "ChatGPT";
+    t = t.replace(RE_DATE, "").trim();
+
+    return !t || /^(?:ChatGPT|New Chat|Nouveau chat|Nouvelle discussion)$/i.test(t);
+  }
+
+  function wait(ms) {
+    return new Promise(function (resolve) {
+      setTimeout(resolve, ms);
+    });
+  }
+
+  function renameError(message, kind) {
+    var error = new Error(message);
+    error.renameKind = kind;
+    return error;
   }
 
   function removeDateSuffix(title) {
@@ -284,6 +305,13 @@
     var title = conversationId ? datedTitle[conversationId] : null;
     if (!title) return;
 
+    var currentTitle = cleanDocumentTitle(document.title);
+    var previousDisplayTitle = renamedDisplayTitle[conversationId];
+
+    if (previousDisplayTitle && currentTitle !== previousDisplayTitle && !isProvisionalTitle(currentTitle)) {
+      return;
+    }
+
     var displayTitle = getDisplayTitle(title);
     if (renamedDisplayTitle[conversationId] === displayTitle && document.title === displayTitle) {
       return;
@@ -339,6 +367,7 @@
 
     return fetch(url, {
       method: "GET",
+      cache: "no-store",
       credentials: "include",
       headers: {
         "content-type": "application/json",
@@ -350,6 +379,79 @@
       }
       return r.json();
     });
+  }
+
+  function conversationTitle(convo) {
+    return convo && typeof convo.title === "string" ? convo.title.trim() : "";
+  }
+
+  function waitForStableConversation(conversationId, token) {
+    var previousTitle = "";
+    var stableReads = 0;
+    var reads = 0;
+
+    function readAgain() {
+      if (getConversationIdFromUrl() !== conversationId) {
+        throw renameError("Conversation changed during title stabilization", "cancelled");
+      }
+
+      return fetchConversation(conversationId, token).then(function (convo) {
+        var title = conversationTitle(convo);
+        reads++;
+
+        if (isProvisionalTitle(title)) {
+          previousTitle = "";
+          stableReads = 0;
+        } else if (title === previousTitle) {
+          stableReads++;
+        } else {
+          previousTitle = title;
+          stableReads = 1;
+        }
+
+        if (stableReads >= TITLE_STABILITY_READS) {
+          return {
+            convo: convo,
+            title: title
+          };
+        }
+
+        if (reads >= MAX_TITLE_STABILITY_READS) {
+          throw renameError("Conversation title did not stabilize", "transient");
+        }
+
+        return wait(TITLE_STABILITY_INTERVAL_MS).then(readAgain);
+      });
+    }
+
+    return readAgain();
+  }
+
+  function scheduleRenameRetry(conversationId) {
+    renameRetryCount[conversationId] = (renameRetryCount[conversationId] || 0) + 1;
+
+    if (renameRetryCount[conversationId] > MAX_RENAME_RETRIES) {
+      renameState[conversationId] = "failed";
+      hideBanner();
+      warn("[cgpt-title-date] auto rename skipped: title remained unstable");
+      return;
+    }
+
+    renameState[conversationId] = "waiting";
+    if (renameRetryHandle[conversationId]) return;
+
+    renameRetryHandle[conversationId] = setTimeout(function () {
+      delete renameRetryHandle[conversationId];
+
+      if (getConversationIdFromUrl() !== conversationId) {
+        delete renameState[conversationId];
+        return;
+      }
+
+      delete renameState[conversationId];
+      delete backendDateAttempted[conversationId];
+      evaluateCurrentPage();
+    }, RENAME_RETRY_MS);
   }
 
   function patchConversationTitle(conversationId, newTitle, token) {
@@ -395,24 +497,27 @@
 
     getAccessToken()
       .then(function (token) {
-        return fetchConversation(conversationId, token).then(function (convo) {
+        return {
+          token: token
+        };
+      })
+      .then(function (data) {
+        return waitForStableConversation(conversationId, data.token).then(function (stable) {
           return {
-            token: token,
-            convo: convo
+            token: data.token,
+            convo: stable.convo,
+            apiTitle: stable.title
           };
         });
       })
       .then(function (data) {
         var convo = data.convo;
-        var apiTitle = convo && typeof convo.title === "string" ? convo.title.trim() : "";
+        var apiTitle = data.apiTitle;
         var yyyymmdd = getConversationDate(convo) || fallbackDate;
-
-        if (!apiTitle) {
-          throw new Error("Empty conversation title");
-        }
 
         if (RE_DATE.test(apiTitle)) {
           renameState[conversationId] = "done";
+          delete renameRetryCount[conversationId];
           showConversationTitle(conversationId, apiTitle);
 
           return null;
@@ -426,8 +531,21 @@
 
         var newApiTitle = addDateSuffix(apiTitle, yyyymmdd);
 
-        return patchConversationTitle(conversationId, newApiTitle, data.token).then(function () {
+        return fetchConversation(conversationId, data.token).then(function (latestConvo) {
+          var latestTitle = conversationTitle(latestConvo);
+
+          if (getConversationIdFromUrl() !== conversationId) {
+            throw renameError("Conversation changed before title update", "cancelled");
+          }
+
+          if (isProvisionalTitle(latestTitle) || latestTitle !== apiTitle) {
+            throw renameError("Conversation title changed before title update", "transient");
+          }
+
+          return patchConversationTitle(conversationId, addDateSuffix(latestTitle, yyyymmdd), data.token);
+        }).then(function () {
           renameState[conversationId] = "done";
+          delete renameRetryCount[conversationId];
           showConversationTitle(conversationId, newApiTitle);
 
           setTimeout(evaluateCurrentPage, 500);
@@ -437,6 +555,18 @@
         });
       })
       .catch(function (e) {
+        if (e && e.renameKind === "cancelled") {
+          delete renameState[conversationId];
+          delete renameRetryCount[conversationId];
+          return;
+        }
+
+        if (e && e.renameKind === "transient") {
+          scheduleRenameRetry(conversationId);
+          log("[cgpt-title-date] title not stable yet, retry scheduled:", e.message);
+          return;
+        }
+
         if (!fallbackDate) {
           delete renameState[conversationId];
           startTimestampMonitor(conversationId);
@@ -480,7 +610,7 @@
         return;
       }
 
-      if (isNeutralTitle(title)) {
+      if (isProvisionalTitle(title)) {
         return;
       }
 
@@ -515,7 +645,7 @@
       return;
     }
 
-    if (isNeutralTitle(title)) {
+    if (isProvisionalTitle(title)) {
       hideBanner();
       return;
     }
@@ -534,10 +664,21 @@
       return;
     }
 
+    if (renameState[conversationId] === "waiting") {
+      return;
+    }
+
     if (renameState[conversationId] === "done") {
-      if (renamedDisplayTitle[conversationId]) {
+      if (renamedDisplayTitle[conversationId] === title) {
         showBanner(renamedDisplayTitle[conversationId]);
+        return;
       }
+
+      delete renameState[conversationId];
+      delete backendDateAttempted[conversationId];
+      delete datedTitle[conversationId];
+      delete renamedDisplayTitle[conversationId];
+      autoRenameOnce(conversationId, null);
       return;
     }
 
