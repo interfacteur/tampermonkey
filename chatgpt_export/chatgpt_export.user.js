@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT export current conversation JSON MD HTML
 // @namespace    local
-// @version      1.5.0
+// @version      1.6.0
 // @description  Export current ChatGPT conversation from backend data as JSON, Markdown, and HTML.
 // @match        https://chatgpt.com/*
 // @match        https://chat.openai.com/*
@@ -948,11 +948,12 @@
     return { turns: turns, prelude: prelude };
   }
 
-  function toMarkdown(convo, exportTitle) {
+  function toMarkdown(convo, exportTitle, sourceUrl) {
     var title = exportTitle || convo.title || "Untitled";
+    var linkedTitle = markdownLink(title, sourceUrl);
     var lines = [];
 
-    lines.push("# " + title);
+    lines.push("# " + (linkedTitle || title));
     lines.push("");
 
     if (convo.create_time) {
@@ -1556,8 +1557,12 @@
     ].join("\n");
   }
 
-  function toHtml(convo, exportTitle) {
+  function toHtml(convo, exportTitle, sourceUrl) {
     var title = exportTitle || convo.title || "Untitled";
+    var conversationUrl = validHttpUrl(sourceUrl);
+    var renderedTitle = conversationUrl
+      ? '<a href="' + escapeHtml(conversationUrl) + '" rel="noopener noreferrer" target="_blank">' + escapeHtml(title) + "</a>"
+      : escapeHtml(title);
     var messages = getOrderedMessages(convo);
     var grouped = groupMessagesByTurn(messages);
     var created = convo.create_time ? new Date(convo.create_time * 1000).toISOString() : "";
@@ -1588,6 +1593,8 @@
       ".prompt-nav a:hover, .prompt-nav a:focus { color: #0969da; text-decoration: underline; }",
       "header { border-bottom: 1px solid #dddddd; margin-bottom: 28px; padding-bottom: 18px; }",
       "h1 { font-size: 26px; line-height: 1.25; margin: 0 0 8px; font-weight: 700; }",
+      "h1 a { color: inherit; text-decoration: underline; text-decoration-thickness: 1px; text-underline-offset: 3px; }",
+      "h1 a:hover, h1 a:focus { color: #0969da; }",
       ".meta { color: #666666; font-size: 13px; }",
       ".turn { margin: 0 0 34px; scroll-margin-top: 24px; }",
       ".msg { margin: 0 0 12px; padding: 18px 18px 16px; border-radius: 14px; border: 1px solid #dddddd; }",
@@ -1643,7 +1650,7 @@
       navigation,
       "<main>",
       "<header>",
-      "<h1>" + escapeHtml(title) + "</h1>",
+      "<h1>" + renderedTitle + "</h1>",
       created ? '<div class="meta">Created: ' + escapeHtml(created) + "</div>" : "",
       "</header>",
       body,
@@ -1677,14 +1684,15 @@
     var data = await fetchCurrentConversation();
     var fallbackTitle = data.convo.title || data.cid;
     var exportTitle = getDisplayTitle(fallbackTitle);
+    var sourceUrl = validHttpUrl(location.href);
     var title = sanitizeName(exportTitle);
     var basename = title + "_" + data.cid.slice(0, 8) + "--" + timestamp();
 
     return {
       basename: basename,
       json: JSON.stringify(data.convo, null, 2),
-      md: toMarkdown(data.convo, exportTitle),
-      html: toHtml(data.convo, exportTitle)
+      md: toMarkdown(data.convo, exportTitle, sourceUrl),
+      html: toHtml(data.convo, exportTitle, sourceUrl)
     };
   }
 
