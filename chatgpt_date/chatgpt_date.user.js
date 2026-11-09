@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Fixed Title Banner Auto Date
 // @namespace    local
-// @version      1.9.0
+// @version      1.10.0
 // @description  Fixed banner with dated chat title. Conservative server rename after title stabilization.
 // @downloadURL  https://raw.githubusercontent.com/interfacteur/tampermonkey/main/chatgpt_date/chatgpt_date.user.js
 // @updateURL    https://raw.githubusercontent.com/interfacteur/tampermonkey/main/chatgpt_date/chatgpt_date.user.js
@@ -16,6 +16,7 @@
   var BANNER_ID = "cgpt-fixed-title-banner";
   var BTN_ID = "cgpt-fixed-title-banner-toggle";
   var TEXT_ID = BANNER_ID + "-txt";
+  var PROJECT_ALERT_ID = "cgpt-project-title-alert";
 
   var RE_DATE = / \{[0-9]{8}\}$/;
   var MAX_TIMESTAMP_TICKS = 30;
@@ -26,6 +27,7 @@
   var MAX_TITLE_STABILITY_READS = 15;
   var RENAME_RETRY_MS = 3000;
   var MAX_RENAME_RETRIES = 3;
+  var PROJECT_ALERT_DELAY_MS = 10000;
 
   var timestampHandle = null;
   var timestampConversationId = null;
@@ -46,6 +48,9 @@
   var backendDateAttempted = Object.create(null);
   var datedTitle = Object.create(null);
   var renamedDisplayTitle = Object.create(null);
+  var projectTitleById = Object.create(null);
+  var projectDetectionStartedAt = Object.create(null);
+  var projectAlerted = Object.create(null);
 
   function log() {
     if (false) {
@@ -62,33 +67,107 @@
     return m ? m[1] : null;
   }
 
-  function getProjectIdFromUrl() {
-    var m = location.pathname.match(/\/g\/(g-p-[a-f0-9]{32})(?:-[^/]*)?\/c\/[a-z0-9-]+/i);
+  function getProjectIdFromPathname(pathname) {
+    var m = String(pathname || "").match(/\/g\/(g-p-[a-z0-9]{16,})(?:-[^/]*)?(?:\/|$)/i);
     return m ? m[1] : null;
   }
 
-  function getProjectTitle() {
-    var projectId = getProjectIdFromUrl();
-    if (!projectId) return null;
+  function getProjectIdFromUrl() {
+    if (!/\/c\/[a-z0-9-]+/i.test(location.pathname)) return null;
+    return getProjectIdFromPathname(location.pathname);
+  }
 
-    var links = document.querySelectorAll('a[href$="/project"]');
+  function cleanProjectCandidate(value) {
+    var title = String(value || "").replace(/\s+/g, " ").trim();
+    if (!title || title.length > 160) return "";
+
+    var generic = /^(?:project|projects|projet|projets|open project|ouvrir le projet|project options|options du projet)$/i;
+    return generic.test(title) ? "" : title;
+  }
+
+  function projectTitleFromElement(element) {
+    if (!element) return "";
+
+    return cleanProjectCandidate(element.getAttribute && element.getAttribute("data-app-action-sidebar-project-label")) ||
+      cleanProjectCandidate(element.textContent) ||
+      cleanProjectCandidate(element.getAttribute && element.getAttribute("aria-label")) ||
+      cleanProjectCandidate(element.getAttribute && element.getAttribute("title"));
+  }
+
+  function findProjectTitleInLinks(projectId) {
+    var links = document.querySelectorAll("a[href]");
 
     for (var i = 0; i < links.length; i++) {
-      var pathname;
+      var url;
 
       try {
-        pathname = new URL(links[i].getAttribute("href"), location.origin).pathname;
+        url = new URL(links[i].getAttribute("href"), location.origin);
       } catch (e) {
         continue;
       }
 
-      if (pathname === "/g/" + projectId + "/project") {
-        var title = String(links[i].textContent || "").trim();
-        return title || null;
+      if (getProjectIdFromPathname(url.pathname) !== projectId) continue;
+      if (/\/c\/[a-z0-9-]+/i.test(url.pathname)) continue;
+      if (!/^\/g\/g-p-[a-z0-9]{16,}(?:-[^/]*)?\/?(?:project\/?)?$/i.test(url.pathname)) continue;
+
+      var title = projectTitleFromElement(links[i]);
+      if (title) return title;
+    }
+
+    return "";
+  }
+
+  function findProjectTitleInIdentifiedElements(projectId) {
+    var elements = document.querySelectorAll(
+      '[data-app-action-sidebar-project-id="' + projectId + '"], ' +
+      '[data-project-id="' + projectId + '"], [data-gizmo-id="' + projectId + '"]'
+    );
+
+    for (var i = 0; i < elements.length; i++) {
+      var title = projectTitleFromElement(elements[i]);
+      if (title) return title;
+    }
+
+    return "";
+  }
+
+  function findProjectTitleInDocumentTitle(conversationTitle) {
+    var currentTitle = cleanDocumentTitle(document.title);
+    var titles = [String(conversationTitle || "").trim()];
+    var withoutDate = removeDateSuffix(conversationTitle);
+    if (withoutDate && titles.indexOf(withoutDate) === -1) titles.push(withoutDate);
+
+    var separators = [" - ", " | ", " · "];
+
+    for (var i = 0; i < titles.length; i++) {
+      if (!titles[i]) continue;
+
+      for (var j = 0; j < separators.length; j++) {
+        var suffix = separators[j] + titles[i];
+        if (currentTitle.length <= suffix.length || currentTitle.slice(-suffix.length) !== suffix) continue;
+
+        var projectTitle = cleanProjectCandidate(currentTitle.slice(0, -suffix.length));
+        if (projectTitle) return projectTitle;
       }
     }
 
-    return null;
+    return "";
+  }
+
+  function getProjectTitle(conversationTitle) {
+    var projectId = getProjectIdFromUrl();
+    if (!projectId) return null;
+
+    var title = findProjectTitleInLinks(projectId) ||
+      findProjectTitleInIdentifiedElements(projectId) ||
+      findProjectTitleInDocumentTitle(conversationTitle);
+
+    if (title) {
+      projectTitleById[projectId] = title;
+      return title;
+    }
+
+    return projectTitleById[projectId] || null;
   }
 
   function cleanDocumentTitle(value) {
@@ -122,11 +201,6 @@
 
   function addDateSuffix(title, yyyymmdd) {
     return removeDateSuffix(title) + " {" + yyyymmdd + "}";
-  }
-
-  function getDisplayTitle(title) {
-    var projectTitle = getProjectTitle();
-    return projectTitle ? projectTitle + " - " + title : title;
   }
 
   function getHistDate() {
@@ -262,6 +336,69 @@
     return true;
   }
 
+  function showProjectDetectionAlert() {
+    if (!document.body) return;
+
+    var alert = document.getElementById(PROJECT_ALERT_ID);
+    if (!alert) {
+      alert = document.createElement("div");
+      alert.id = PROJECT_ALERT_ID;
+      alert.setAttribute("role", "alert");
+
+      Object.assign(alert.style, {
+        position: "fixed",
+        top: "34px",
+        right: "10px",
+        zIndex: "10000001",
+        maxWidth: "420px",
+        padding: "8px 11px",
+        border: "1px solid #b45309",
+        borderRadius: "7px",
+        background: "#fff7ed",
+        color: "#7c2d12",
+        boxShadow: "0 4px 14px rgba(0,0,0,0.16)",
+        font: "600 12px/1.4 system-ui, sans-serif"
+      });
+
+      document.body.appendChild(alert);
+    }
+
+    alert.textContent = "⚠ Nom du projet introuvable : le titre n’a pas été préfixé.";
+    alert.style.display = "block";
+  }
+
+  function hideProjectDetectionAlert() {
+    var alert = document.getElementById(PROJECT_ALERT_ID);
+    if (alert) alert.style.display = "none";
+  }
+
+  function updateProjectDetectionAlert(projectId, projectTitle) {
+    if (!projectId) {
+      hideProjectDetectionAlert();
+      return;
+    }
+
+    if (projectTitle) {
+      delete projectDetectionStartedAt[projectId];
+      delete projectAlerted[projectId];
+      hideProjectDetectionAlert();
+      return;
+    }
+
+    if (!projectDetectionStartedAt[projectId]) {
+      projectDetectionStartedAt[projectId] = Date.now();
+      return;
+    }
+
+    if (Date.now() - projectDetectionStartedAt[projectId] >= PROJECT_ALERT_DELAY_MS) {
+      showProjectDetectionAlert();
+      if (!projectAlerted[projectId]) {
+        projectAlerted[projectId] = true;
+        warn("[cgpt-title-date] project name not detected; title left without project prefix:", projectId);
+      }
+    }
+  }
+
   function updateBannerVisibility() {
     var b = document.getElementById(BANNER_ID);
     var btn = document.getElementById(BTN_ID);
@@ -291,7 +428,11 @@
 
     datedTitle[conversationId] = title;
 
-    var displayTitle = getDisplayTitle(title);
+    var projectId = getProjectIdFromUrl();
+    var projectTitle = getProjectTitle(title);
+    updateProjectDetectionAlert(projectId, projectTitle);
+
+    var displayTitle = projectTitle ? projectTitle + " - " + title : title;
     renamedDisplayTitle[conversationId] = displayTitle;
     showBanner(displayTitle);
 
@@ -303,6 +444,10 @@
   function refreshProjectDisplay() {
     var conversationId = getConversationIdFromUrl();
     var title = conversationId ? datedTitle[conversationId] : null;
+    var projectId = getProjectIdFromUrl();
+    var projectTitle = getProjectTitle(title);
+
+    updateProjectDetectionAlert(projectId, projectTitle);
     if (!title) return;
 
     var currentTitle = cleanDocumentTitle(document.title);
@@ -312,7 +457,7 @@
       return;
     }
 
-    var displayTitle = getDisplayTitle(title);
+    var displayTitle = projectTitle ? projectTitle + " - " + title : title;
     if (renamedDisplayTitle[conversationId] === displayTitle && document.title === displayTitle) {
       return;
     }
@@ -706,6 +851,8 @@
 
     stopTimestampMonitor();
     hideBanner();
+    hideProjectDetectionAlert();
+    projectDetectionStartedAt = Object.create(null);
 
     setTimeout(evaluateCurrentPage, 0);
     setTimeout(function () {
