@@ -8,6 +8,8 @@ Scripts Tampermonkey liés à l'export des conversations ChatGPT.
 
 Les exports Markdown et HTML commencent par le titre de la conversation lié à son URL complète au moment de l’export. Le contexte d’un projet et les paramètres présents dans l’URL, par exemple `?src=history_search`, sont ainsi conservés. Le JSON reste la copie brute des données backend.
 
+Lorsqu’un projet préfixe le titre affiché sous la forme `Projet - Conversation {YYYYMMDD}`, le nom de fichier place la conversation en premier : `Conversation ~~ Projet {YYYYMMDD}_<id>--<horodatage>`. Le titre visible à l’intérieur de l’archive n’est pas modifié.
+
 Les exports Markdown et HTML résolvent les références de contenu fournies par ChatGPT :
 
 - les citations web deviennent des liens externes lorsqu’une URL est disponible ;

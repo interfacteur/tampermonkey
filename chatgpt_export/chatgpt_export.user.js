@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT export current conversation JSON MD HTML
 // @namespace    local
-// @version      1.6.0
+// @version      1.7.0
 // @description  Export current ChatGPT conversation from backend data as JSON, Markdown, and HTML.
 // @match        https://chatgpt.com/*
 // @match        https://chat.openai.com/*
@@ -45,6 +45,26 @@
       .replace(/[<>:"/\\|?*]/g, "_")
       .replace(/^[. ]+|[. ]+$/g, "")
       .slice(0, 180) || "chatgpt-conversation";
+  }
+
+  function getFilenameTitle(displayTitle, conversationTitle) {
+    var display = String(displayTitle || "").trim();
+    var conversation = String(conversationTitle || "").trim();
+    var separator = " - ";
+    var suffix = separator + conversation;
+
+    if (!conversation || display.length <= suffix.length || display.slice(-suffix.length) !== suffix) {
+      return display || conversation;
+    }
+
+    var project = display.slice(0, -suffix.length).trim();
+    if (!project) return conversation;
+
+    var dateMatch = conversation.match(/( \{[0-9]{8}\})$/);
+    var dateSuffix = dateMatch ? dateMatch[1] : "";
+    var bareTitle = dateSuffix ? conversation.slice(0, -dateSuffix.length).trim() : conversation;
+
+    return bareTitle + " ~~ " + project + dateSuffix;
   }
 
   function download(filename, text, mime) {
@@ -1685,7 +1705,7 @@
     var fallbackTitle = data.convo.title || data.cid;
     var exportTitle = getDisplayTitle(fallbackTitle);
     var sourceUrl = validHttpUrl(location.href);
-    var title = sanitizeName(exportTitle);
+    var title = sanitizeName(getFilenameTitle(exportTitle, fallbackTitle));
     var basename = title + "_" + data.cid.slice(0, 8) + "--" + timestamp();
 
     return {
