@@ -14,6 +14,8 @@ Exemple : `Partition de Goldbach {20250806}`.
 
 Exemple dans le projet `Recherche` : la bannière et l’onglet affichent `Recherche - Partition de Goldbach {20250806}`, tandis que le titre enregistré reste `Partition de Goldbach {20250806}`. Les exports qui utilisent le titre de l’onglet conservent ainsi le contexte du projet sans encombrer l’index du projet ni créer une chaîne de préfixes après un déplacement.
 
+Le nom du projet est recherché à partir de plusieurs signaux concordants : l’identifiant stable présent dans l’URL, les attributs de la ligne de projet (`data-app-action-sidebar-project-id` et `data-app-action-sidebar-project-label`), les autres liens ou attributs DOM associés au même identifiant, puis le préfixe éventuel du titre natif de la page comparé au titre backend de la conversation. Le slug de l’URL n’est pas utilisé comme nom, car il peut perdre la casse et les accents. Si aucun nom fiable n’est trouvé au bout de dix secondes, une alerte orange indique que le titre n’a pas été préfixé. Cette alerte n’est jamais armée pour une conversation ordinaire dont l’URL ne contient aucun identifiant de projet `g-p-…`.
+
 ## Comportement attendu
 
 Sur une page de conversation déjà horodatée :
@@ -61,6 +63,8 @@ Le script combine plusieurs signaux afin d’éviter les traitements prématuré
 - observation du titre du document ;
 - attente d’un titre stabilisé ;
 - lecture locale du projet depuis le fil d’Ariane, indépendamment du renommage backend ;
+- conservation en mémoire du dernier nom fiable associé à chaque identifiant de projet ;
+- alerte visible lorsque l’URL désigne un projet mais qu’aucun nom fiable ne peut être déterminé ;
 - récupération backend ponctuelle de `conversation.create_time`, avec fallback sur la première date de message exploitable puis sur `.chatgpt-timestamp` ;
 - recherche temporaire, limitée dans le temps, de `.chatgpt-timestamp` lorsque le backend ne fournit pas de date exploitable ;
 - affichage de la bannière seulement lorsqu’un titre daté peut être affiché ;
